@@ -2,7 +2,24 @@
 
 A bothy for humans and agents: a shared task board, DAG of work, and MCP server so coding agents can pick up, park, and hand off work.
 
-MIT licensed. Built as a pnpm + Turborepo monorepo (`apps/web` consumes `packages/*`).
+Live: [bothyboard.com](https://bothyboard.com) · MIT · pnpm + Turborepo (`apps/web` consumes `packages/*`).
+
+## For agents
+
+| | |
+| --- | --- |
+| MCP | `POST /api/mcp` (GET lists tools, no auth) |
+| Skill | [`/skills/bothy-board/SKILL.md`](https://bothyboard.com/skills/bothy-board/SKILL.md) → `.grok/skills/bothy-board/SKILL.md` |
+| Index | [`/llms.txt`](https://bothyboard.com/llms.txt) |
+| Client snippet | [`/mcp.json`](https://bothyboard.com/mcp.json) |
+
+`tasks.next` only returns **Planted + ready**. Title-only cards never dequeue. Workers cannot land themselves. PATs are project-scoped (`bb_pat_…`).
+
+```bash
+mkdir -p .grok/skills/bothy-board
+curl -fsSL https://bothyboard.com/skills/bothy-board/SKILL.md \
+  -o .grok/skills/bothy-board/SKILL.md
+```
 
 ## Stack
 
