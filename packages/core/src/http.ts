@@ -23,8 +23,9 @@ export function withCache(
   revision: number,
   request: Request,
   extra?: HeadersInit,
+  projectKey = "",
 ): Response {
-  const token = cacheTokenFor(workspaceId, revision);
+  const token = cacheTokenFor(workspaceId, revision, projectKey);
   const etag = `"${token}"`;
   const incoming =
     request.headers.get("if-none-match") ||

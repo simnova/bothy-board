@@ -1,4 +1,4 @@
-export const TASK_KINDS = ["feature", "bug", "chore", "integration", "spike"] as const;
+export const TASK_KINDS = ["feature", "bug", "chore", "integration", "spike", "epic"] as const;
 export type TaskKind = (typeof TASK_KINDS)[number];
 
 export const TASK_STATUSES = [
@@ -13,6 +13,9 @@ export const TASK_STATUSES = [
   "cancelled",
 ] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
+
+export const FACTORY_STATES = ["Idle", "Planted", "Dispatched", "Landed", "Graded"] as const;
+export type FactoryState = (typeof FACTORY_STATES)[number];
 
 export const AGENT_KINDS = ["grok", "cursor", "claude", "codex", "other"] as const;
 export type AgentKind = (typeof AGENT_KINDS)[number];
@@ -33,6 +36,11 @@ export type CompactTask = {
   title: string;
   kind: TaskKind;
   status: TaskStatus;
+  factory: FactoryState;
+  lane: string | null;
+  writeRoots: string[];
+  objective: string;
+  doneWhen: string[];
   priority: number;
   assigneeAgentId: string | null;
   continuationId: string | null;
@@ -45,6 +53,7 @@ export type CompactTask = {
   integrationStatus: IntegrationStatus;
   blockedReason: string | null;
   depIds: string[];
+  childCount: number;
   updatedAt: string;
 };
 
@@ -52,6 +61,10 @@ export type TaskDetail = CompactTask & {
   body: string;
   projectId: string;
   assigneeUserId: string | null;
+  outOfScope: string;
+  knownGood: string;
+  notTested: string;
+  noGrade: boolean;
   createdAt: string;
   comments: CommentRow[];
   children: CompactTask[];
@@ -131,7 +144,7 @@ export type Snapshot = {
   events: EventRow[];
   members: MemberRow[];
   readyIds: string[];
-  mcpKey: string;
+  incomplete: boolean;
   myRole: "owner" | "member" | null;
 };
 

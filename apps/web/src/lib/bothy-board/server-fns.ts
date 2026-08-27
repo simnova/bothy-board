@@ -5,6 +5,7 @@ import {
   decomposeTask,
   getTaskDetail,
   heartbeat,
+  plantTask,
   snapshotForUser,
   updateTask,
 } from "@bothy-board/core/queries";
@@ -46,6 +47,8 @@ export const postTask = createServerFn({ method: "POST" })
     (input: {
       title: string;
       body?: string;
+      objective?: string;
+      doneWhen?: string[];
       kind?: TaskKind;
       parentId?: string | null;
       projectId?: string;
@@ -74,7 +77,16 @@ export const patchTask = createServerFn({ method: "POST" })
       const { enforceActorUserLimit } = await import("@bothy-board/core/rate-limit");
       await enforceActorUserLimit(context.userId, "destructive");
     }
-    await updateTask(ws.id, data.taskId, data);
+    await updateTask(ws.id, data.taskId, { ...data, writer: "owner" });
+    return snapshotForUser(context.userId);
+  });
+
+export const postPlant = createServerFn({ method: "POST" })
+  .middleware([authMiddleware, rateLimitMiddleware])
+  .validator((input: { taskId: string }) => input)
+  .handler(async ({ context, data }) => {
+    const ws = await workspaceForUser(context.userId);
+    await plantTask(ws.id, data.taskId);
     return snapshotForUser(context.userId);
   });
 

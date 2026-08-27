@@ -1,5 +1,5 @@
 import { getSql, type Sql } from "@bothy-board/db";
-import { cacheTokenFor, demoMcpKey, hashApiKey } from "./hash";
+import { cacheTokenFor, newApiKey } from "./hash";
 import { makeId } from "./ids";
 import { ensureBothyBoardProject, seedNorthline } from "./seed";
 import type { WorkspaceRow } from "./types";
@@ -69,13 +69,13 @@ export async function workspaceForUser(userId: string): Promise<WorkspaceRow> {
     on conflict (user_id) do update set active_workspace_id = excluded.active_workspace_id`;
   await seedNorthline(sql, id, userId);
   await ensureBothyBoardProject(sql, id, userId);
-  const key = demoMcpKey(id);
+  const key = newApiKey();
   const keys = await sql<{
     id: string;
   }>`select id from api_keys where workspace_id = ${id} limit 1`;
   if (!keys[0]) {
     await sql`insert into api_keys (id, workspace_id, name, key_hash, key_prefix, created_by_user_id)
-      values (${makeId("key")}, ${id}, ${"Workspace MCP key"}, ${hashApiKey(key)}, ${key.slice(0, 18)}, ${userId})`;
+      values (${makeId("key")}, ${id}, ${"Workspace MCP key"}, ${key.hash}, ${key.prefix}, ${userId})`;
   }
   const created = await sql<{ id: string; name: string; revision: number }>`
     select id, name, revision from workspaces where id = ${id}`;

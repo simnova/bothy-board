@@ -1,5 +1,6 @@
 import type { Sql } from "@bothy-board/db";
-import { demoMcpKey, hashApiKey } from "./hash";
+import { serializeCard } from "./card";
+import { newApiKey } from "./hash";
 import { makeId } from "./ids";
 
 type SeedTask = {
@@ -9,6 +10,7 @@ type SeedTask = {
   body: string;
   kind: string;
   status: string;
+  factory?: string;
   priority: number;
   agentId?: string;
   continuationId?: string;
@@ -22,6 +24,43 @@ type SeedTask = {
   deps?: string[];
   assigneeUser?: boolean;
 };
+
+function factoryFor(status: string): string {
+  if (status === "ready") return "Planted";
+  if (
+    status === "claimed" ||
+    status === "in_progress" ||
+    status === "review" ||
+    status === "blocked"
+  ) {
+    return "Dispatched";
+  }
+  if (status === "integrating" || status === "done") return "Landed";
+  return "Idle";
+}
+
+function wrapBody(
+  title: string,
+  body: string,
+): { body: string; objective: string; doneWhen: string } {
+  const objective = (body.split(".")[0] || title).trim();
+  const doneWhen = ["exists:packages/core/src/queries.ts"];
+  return {
+    body: serializeCard({
+      objective,
+      doneWhen,
+      writeRoots: [],
+      lane: null,
+      knownGood: "",
+      failedTreatments: [],
+      outOfScope: "",
+      notTested: "",
+      extra: {},
+    }),
+    objective,
+    doneWhen: JSON.stringify(doneWhen),
+  };
+}
 
 export async function seedNorthline(sql: Sql, workspaceId: string, ownerUserId: string) {
   const projectId = makeId("prj");
@@ -247,18 +286,41 @@ export async function seedNorthline(sql: Sql, workspaceId: string, ownerUserId: 
   let order = 0;
   for (const t of tasks) {
     const assigneeUser = "assigneeUser" in t && t.assigneeUser ? ownerUserId : null;
-    await sql`insert into tasks (
-        id, workspace_id, project_id, parent_id, title, body, kind, status, priority,
+    const card = wrapBody(t.title, t.body);
+    const factory = t.factory ?? factoryFor(t.status);
+    await sql.query(
+      `insert into tasks (
+        id, workspace_id, project_id, parent_id, title, body, kind, status, factory, priority,
         assignee_user_id, assignee_agent_id, continuation_id, grok_session_id, grok_subagent_id,
         affinity_machine_name, branch, worktree_path,
-        integration_status, blocked_reason, sort_order
-      ) values (
-        ${t.id}, ${workspaceId}, ${projectId}, ${t.parentId ?? null}, ${t.title}, ${t.body},
-        ${t.kind}, ${t.status}, ${t.priority}, ${assigneeUser}, ${t.agentId ?? null},
-        ${t.continuationId ?? null}, ${t.grokSessionId ?? null}, ${t.grokSubagentId ?? null},
-        ${t.affinityMachine ?? null}, ${t.branch ?? null}, ${t.worktreePath ?? null},
-        ${t.integration ?? "none"}, ${t.blockedReason ?? null}, ${order++}
-      )`;
+        integration_status, blocked_reason, sort_order, objective, done_when
+      ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23::jsonb)`,
+      [
+        t.id,
+        workspaceId,
+        projectId,
+        t.parentId ?? null,
+        t.title,
+        card.body,
+        t.kind,
+        t.status,
+        factory,
+        t.priority,
+        assigneeUser,
+        t.agentId ?? null,
+        t.continuationId ?? null,
+        t.grokSessionId ?? null,
+        t.grokSubagentId ?? null,
+        t.affinityMachine ?? null,
+        t.branch ?? null,
+        t.worktreePath ?? null,
+        t.integration ?? "none",
+        t.blockedReason ?? null,
+        order++,
+        card.objective,
+        card.doneWhen,
+      ],
+    );
     for (const dep of t.deps ?? []) {
       await sql`insert into task_deps (workspace_id, task_id, depends_on_id)
         values (${workspaceId}, ${t.id}, ${dep})`;
@@ -403,9 +465,9 @@ export async function seedNorthline(sql: Sql, workspaceId: string, ownerUserId: 
       values (${makeId("evt")}, ${workspaceId}, ${e.task}, ${e.agent}, ${e.kind}, ${e.message})`;
   }
 
-  const key = demoMcpKey(workspaceId);
+  const key = newApiKey();
   await sql`insert into api_keys (id, workspace_id, name, key_hash, key_prefix, created_by_user_id)
-    values (${makeId("key")}, ${workspaceId}, ${"Workspace MCP key"}, ${hashApiKey(key)}, ${key.slice(0, 18)}, ${ownerUserId})`;
+    values (${makeId("key")}, ${workspaceId}, ${"Workspace MCP key"}, ${key.hash}, ${key.prefix}, ${ownerUserId})`;
 }
 
 /** Real BothyBoard product board — created next to the Harbor demo, never twice. */
@@ -476,8 +538,26 @@ export async function ensureBothyBoardProject(
     },
   ];
   for (const t of tasks) {
-    await sql`insert into tasks (id, workspace_id, project_id, parent_id, title, body, kind, status, priority)
-      values (${t.id}, ${workspaceId}, ${projectId}, ${t.parentId ?? null}, ${t.title}, ${t.body}, ${t.kind}, ${t.status}, ${t.priority})`;
+    const card = wrapBody(t.title, t.body);
+    const factory = t.factory ?? factoryFor(t.status);
+    await sql.query(
+      `insert into tasks (id, workspace_id, project_id, parent_id, title, body, kind, status, factory, priority, objective, done_when)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)`,
+      [
+        t.id,
+        workspaceId,
+        projectId,
+        t.parentId ?? null,
+        t.title,
+        card.body,
+        t.kind,
+        t.status,
+        factory,
+        t.priority,
+        card.objective,
+        card.doneWhen,
+      ],
+    );
   }
   await sql`insert into events (id, workspace_id, task_id, kind, message)
     values (${makeId("evt")}, ${workspaceId}, ${tEpic}, ${"create"}, ${"Opened the BothyBoard project"})`;

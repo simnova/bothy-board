@@ -105,11 +105,30 @@
       "development": "./src/ids.ts",
       "import": "./src/ids.ts",
       "default": "./dist/ids.js"
+    },
+    "./factory": {
+      "types": "./dist/factory.d.ts",
+      "development": "./src/factory.ts",
+      "import": "./src/factory.ts",
+      "default": "./dist/factory.js"
+    },
+    "./card": {
+      "types": "./dist/card.d.ts",
+      "development": "./src/card.ts",
+      "import": "./src/card.ts",
+      "default": "./dist/card.js"
+    },
+    "./errors": {
+      "types": "./dist/errors.d.ts",
+      "development": "./src/errors.ts",
+      "import": "./src/errors.ts",
+      "default": "./dist/errors.js"
     }
   },
   "scripts": {
     "typecheck": "tsc --build --pretty",
-    "build": "tsc --build --pretty"
+    "build": "tsc --build --pretty",
+    "test": "node --experimental-strip-types --test src/card.test.ts src/factory.test.ts"
   },
   "dependencies": {
     "@bothy-board/db": "workspace:*"

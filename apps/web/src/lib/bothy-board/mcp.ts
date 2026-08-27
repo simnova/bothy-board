@@ -1,4 +1,5 @@
 import { assertTaskAccess, resolveWriteProject } from "@bothy-board/core/access";
+import type { WriterKind } from "@bothy-board/core/factory";
 import { corsHeaders, json } from "@bothy-board/core/http";
 import {
   addComment,
@@ -9,7 +10,9 @@ import {
   heartbeat,
   loadSnapshot,
   nextReady,
+  plantTask,
   registerWorktree,
+  setProofs,
   updateTask,
 } from "@bothy-board/core/queries";
 import {
@@ -43,9 +46,11 @@ const PROTOCOL = "2025-03-26";
 const INSTRUCTIONS = `BothyBoard is the shared shelter — a logbook for humans and coding agents. Duck in, do the work, leave it ready. Grok sessions are local (~/.grok/sessions); BothyBoard is the ledger.
 
 Orchestrator (before spawn):
-1. bothy-board.sessions.mint { taskId, machineName } — mints a UUID, writes it on the task, returns spawnCommand.
-2. Run: grok -s <grokSessionId> -w -p "…"  (do not resume with -s).
-3. After spawn_subagent, bothy-board.sessions.bind { grokSessionId, grokSubagentId, taskId, machineName }.
+1. bothy-board.tasks.next — Planted+ready only; {task:null} means no candidate.
+2. bothy-board.sessions.mint { taskId, machineName } — mints a UUID, writes it on the task, returns spawnCommand.
+3. Run: grok -s <grokSessionId> -w -p "…"  (do not resume with -s).
+4. After spawn_subagent, bothy-board.sessions.bind { grokSessionId, grokSubagentId, taskId, machineName }.
+5. Land only via bothy-board.tasks.proofs.set (factory:land). Workers set review, never done.
 
 Worker (inside the Grok session):
 - Pass grokSessionId from GROK_SESSION_ID (env) or header X-Grok-Session-Id on every bind/heartbeat.
@@ -53,6 +58,8 @@ Worker (inside the Grok session):
 - bothy-board.mailbox.poll { taskId, since } every few turns — this is how other agents talk to you. Grok cannot prompt a running subagent.
 - bothy-board.agents.heartbeat with grokSessionId + machineName.
 - On finish: bothy-board.tasks.update status=review. Leave the session parked for resume_from.
+
+Owner plants with bothy-board.tasks.plant after TREE done_when is valid. Create refuses title-only.
 
 Corrections: bothy-board.sessions.resume { taskId, machineName }. If allowed, grok --resume <id> or spawn_subagent resume_from=<grokSubagentId> (in-place, same machine, child must be finished). If parkedOn another machine, comment on the mailbox instead.
 
@@ -69,7 +76,8 @@ const TOOLS = [
   },
   {
     name: "bothy-board.tasks.next",
-    description: "Return the highest-priority ready task whose dependencies are done.",
+    description:
+      "Next Planted+ready leaf whose deps are done, ordered by priority ASC then id. {task:null} is success (no-candidate). Refuses if the snapshot would be truncated.",
     inputSchema: { type: "object", properties: {} },
   },
   {
@@ -84,12 +92,17 @@ const TOOLS = [
   },
   {
     name: "bothy-board.tasks.create",
-    description: "Create a task. Optional parentId and depIds.",
+    description:
+      "Create an Idle+backlog card. Requires title + objective (body ## objective or objective field). Title-only is refused. Does not Plant.",
     inputSchema: {
       type: "object",
       properties: {
         title: { type: "string" },
         body: { type: "string" },
+        objective: { type: "string" },
+        doneWhen: { type: "array", items: { type: "string" } },
+        writeRoots: { type: "array", items: { type: "string" } },
+        lane: { type: "string" },
         kind: { type: "string" },
         parentId: { type: "string" },
         projectId: {
@@ -129,7 +142,7 @@ const TOOLS = [
         kind: { type: "string" },
         agentId: { type: "string" },
       },
-      required: ["grokSessionId"],
+      required: ["grokSessionId", "taskId"],
     },
   },
   {
@@ -174,7 +187,7 @@ const TOOLS = [
   {
     name: "bothy-board.tasks.claim",
     description:
-      "Claim a task. Prefer bothy-board.sessions.mint then spawn, then bind. Accepts grokSessionId if already minted.",
+      "CAS claim: Planted+ready+unassigned. Second claim returns already_claimed. Prefer mint then spawn then bind (bind auto-claims).",
     inputSchema: {
       type: "object",
       properties: {
@@ -193,7 +206,7 @@ const TOOLS = [
   {
     name: "bothy-board.tasks.update",
     description:
-      "Patch status, branch, worktree, continuation, Grok ids, integration, or blocked reason.",
+      "Patch. Workers may set review/blocked. They cannot set done, Planted, Landed, or Graded.",
     inputSchema: {
       type: "object",
       properties: {
@@ -213,7 +226,8 @@ const TOOLS = [
   },
   {
     name: "bothy-board.tasks.decompose",
-    description: "Split a task into children. Children depend on the parent remaining done.",
+    description:
+      "Split into children. Parent becomes a container (not in next). Children do NOT depend on the parent; they stay Idle+backlog until planted themselves.",
     inputSchema: {
       type: "object",
       properties: {
@@ -227,6 +241,31 @@ const TOOLS = [
         },
       },
       required: ["taskId", "children"],
+    },
+  },
+  {
+    name: "bothy-board.tasks.plant",
+    description:
+      "Owner/PAT with factory:plant: Idle → Planted+ready after TREE done_when validates. Does not auto-plant on create.",
+    inputSchema: {
+      type: "object",
+      properties: { taskId: { type: "string" } },
+      required: ["taskId"],
+    },
+  },
+  {
+    name: "bothy-board.tasks.proofs.set",
+    description:
+      "Orchestrator (factory:land): proofsOk+headSha → factory=Landed, status=integrating. Workers cannot Landed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string" },
+        proofsOk: { type: "boolean" },
+        headSha: { type: "string" },
+        reportPath: { type: "string" },
+      },
+      required: ["taskId", "proofsOk"],
     },
   },
   {
@@ -275,7 +314,7 @@ const TOOLS = [
         taskId: { type: "string" },
         status: { type: "string" },
       },
-      required: ["path", "branch"],
+      required: ["path", "branch", "taskId"],
     },
   },
   {
@@ -342,6 +381,19 @@ function str(args: Record<string, unknown>, key: string): string | undefined {
   return typeof v === "string" && v.length ? v : undefined;
 }
 
+function writerFor(actor: Actor, name: string): WriterKind {
+  if (name === "bothy-board.tasks.proofs.set") return "orchestrator";
+  if (actor.type === "agent") return "agent";
+  if (
+    actor.type === "pat" &&
+    !hasScope(actor, "factory:plant") &&
+    !hasScope(actor, "factory:land")
+  ) {
+    return "agent";
+  }
+  return "owner";
+}
+
 async function callTool(
   actor: Actor,
   name: string,
@@ -386,8 +438,10 @@ async function callTool(
         members: snap.members,
       });
     }
-    case "bothy-board.tasks.next":
-      return toolResult({ task: await nextReady(workspaceId, filter) });
+    case "bothy-board.tasks.next": {
+      const next = await nextReady(workspaceId, filter);
+      return toolResult({ task: next.task });
+    }
     case "bothy-board.tasks.get":
       return toolResult({ task: await getTaskDetail(workspaceId, taskId ?? "") });
     case "bothy-board.tasks.create": {
@@ -396,6 +450,12 @@ async function callTool(
         id: await createTask(workspaceId, {
           title: str(args, "title") ?? "",
           body: str(args, "body") ?? "",
+          objective: str(args, "objective"),
+          doneWhen: Array.isArray(args["doneWhen"]) ? args["doneWhen"].map(String) : undefined,
+          writeRoots: Array.isArray(args["writeRoots"])
+            ? args["writeRoots"].map(String)
+            : undefined,
+          lane: str(args, "lane"),
           kind: args["kind"] as TaskKind | undefined,
           parentId: str(args, "parentId") ?? null,
           depIds: Array.isArray(args["depIds"]) ? args["depIds"].map(String) : [],
@@ -469,6 +529,18 @@ async function callTool(
           worktreePath: str(args, "worktreePath"),
           integrationStatus: args["integrationStatus"] as never,
           blockedReason: str(args, "blockedReason"),
+          writer: writerFor(actor, name),
+        }),
+      });
+    case "bothy-board.tasks.plant":
+      return toolResult({ task: await plantTask(workspaceId, taskId ?? "") });
+    case "bothy-board.tasks.proofs.set":
+      return toolResult({
+        task: await setProofs(workspaceId, {
+          taskId: taskId ?? "",
+          proofsOk: Boolean(args["proofsOk"]),
+          headSha: str(args, "headSha"),
+          reportPath: str(args, "reportPath"),
         }),
       });
     case "bothy-board.tasks.delete": {
@@ -523,8 +595,8 @@ async function callTool(
         }),
       );
     case "bothy-board.worktrees.register":
-      if (str(args, "taskId"))
-        await assertTaskAccess(actor, workspaceId, str(args, "taskId") ?? "");
+      if (!str(args, "taskId")) throw new Error("taskId required");
+      await assertTaskAccess(actor, workspaceId, str(args, "taskId") ?? "");
       return toolResult({
         id: await registerWorktree(workspaceId, {
           path: str(args, "path") ?? "",
@@ -535,15 +607,17 @@ async function callTool(
         }),
       });
     case "bothy-board.team.members":
-      return toolResult({ members: await listMembers(workspaceId) });
+      return toolResult({ members: await listMembers(workspaceId, filter) });
     case "bothy-board.projects.list": {
       const { listUserProjects } = await import("@bothy-board/core/projects");
-      const projects = userId
+      const listed = userId
         ? await listUserProjects(workspaceId, userId)
         : (await loadSnapshot(workspaceId, workspaceName, revision, filter)).projects.map((p) => ({
             ...p,
+            workspaceId,
             role: "member" as const,
           }));
+      const projects = filter ? listed.filter((p) => filter.includes(p.id)) : listed;
       return toolResult({ projects });
     }
     case "bothy-board.projects.create": {
@@ -604,7 +678,7 @@ export async function handleMcp(request: Request): Promise<Response> {
         ok(id, {
           protocolVersion: PROTOCOL,
           capabilities: { tools: { listChanged: false }, resources: {} },
-          serverInfo: { name: "bothy-board", version: "0.2.0" },
+          serverInfo: { name: "bothy-board", version: "0.3.0" },
           instructions: INSTRUCTIONS,
         }),
         200,

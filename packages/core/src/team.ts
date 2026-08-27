@@ -400,18 +400,37 @@ export async function lookupHandleForInvite(handleRaw: string): Promise<PublicPr
   return publishedView(row, boards, false);
 }
 
-export async function listMembers(workspaceId: string): Promise<MemberRow[]> {
+export async function listMembers(
+  workspaceId: string,
+  projectIds?: string[] | null,
+): Promise<MemberRow[]> {
   const sql = await getSql();
+  if (projectIds?.length) {
+    return sql.query<MemberRow>(
+      `select m.user_id as "userId",
+        coalesce(p.handle, 'unknown') as handle,
+        case when bool_or(coalesce(pm.role, m.role) = 'owner') then 'owner' else 'member' end as role
+       from workspace_members m
+       left join profiles p on p.user_id = m.user_id
+       left join project_members pm on pm.user_id = m.user_id
+       left join projects pr on pr.id = pm.project_id and pr.workspace_id = m.workspace_id
+       where m.workspace_id = $1 and pr.id = any($2) and pr.deleted_at is null
+       group by m.user_id, p.handle
+       order by case when bool_or(coalesce(pm.role, m.role) = 'owner') then 0 else 1 end, coalesce(p.handle, m.user_id)`,
+      [workspaceId, projectIds],
+    );
+  }
   return sql<MemberRow>`
     select m.user_id as "userId",
       coalesce(p.handle, 'unknown') as handle,
-      coalesce(pm.role, m.role) as role
+      case when bool_or(coalesce(pm.role, m.role) = 'owner') then 'owner' else 'member' end as role
     from workspace_members m
     left join profiles p on p.user_id = m.user_id
     left join projects pr on pr.workspace_id = m.workspace_id
     left join project_members pm on pm.project_id = pr.id and pm.user_id = m.user_id
     where m.workspace_id = ${workspaceId}
-    order by case when coalesce(pm.role, m.role) = 'owner' then 0 else 1 end, coalesce(p.handle, m.user_id)`;
+    group by m.user_id, p.handle
+    order by case when bool_or(coalesce(pm.role, m.role) = 'owner') then 0 else 1 end, coalesce(p.handle, m.user_id)`;
 }
 
 export async function listWorkspaces(userId: string): Promise<WorkspaceChoice[]> {

@@ -13,6 +13,7 @@ import {
   postDecompose,
   postDeleteTask,
   postMintSession,
+  postPlant,
   postResumeSession,
 } from "@/lib/bothy-board/server-fns";
 import { kindTone, statusTone } from "./status";
@@ -79,6 +80,13 @@ export function TaskPanel({
       void detail.refetch();
     },
   });
+  const plant = useMutation({
+    mutationFn: () => postPlant({ data: { taskId } }),
+    onSuccess: (next) => {
+      qc.setQueryData(["snapshot"], next);
+      void detail.refetch();
+    },
+  });
   const remove = useMutation({
     mutationFn: () => postDeleteTask({ data: { taskId } }),
     onSuccess: (next) => {
@@ -141,6 +149,7 @@ export function TaskPanel({
               {task ? (
                 <Badge tone={statusTone(task.status)}>{task.status.replace("_", " ")}</Badge>
               ) : null}
+              {task ? <Badge>{task.factory}</Badge> : null}
             </div>
             <h2 className="text-lg font-medium leading-snug tracking-tight">
               {task?.title ?? "Loading"}
@@ -207,6 +216,15 @@ export function TaskPanel({
               <Button variant="secondary" onClick={() => claim.mutate()} disabled={claim.isPending}>
                 Dispatch
               </Button>
+              {task?.factory === "Idle" ? (
+                <Button
+                  variant="secondary"
+                  onClick={() => plant.mutate()}
+                  disabled={plant.isPending}
+                >
+                  Plant
+                </Button>
+              ) : null}
             </div>
             {spawn ? (
               <div className="mt-3">

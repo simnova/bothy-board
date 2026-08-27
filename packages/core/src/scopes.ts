@@ -25,6 +25,18 @@ export const PAT_SCOPES = [
     ],
   },
   {
+    id: "factory:plant",
+    label: "Plant cards",
+    hint: "Owner-only: Idle → Planted after TREE done_when checks out",
+    tools: ["bothy-board.tasks.plant"],
+  },
+  {
+    id: "factory:land",
+    label: "Land proofs",
+    hint: "Orchestrator-only: proofs.set → Landed. Not on default worker tokens.",
+    tools: ["bothy-board.tasks.proofs.set"],
+  },
+  {
     id: "sessions",
     label: "Grok sessions",
     hint: "Mint, bind, and resume continuation IDs",
@@ -64,8 +76,10 @@ export type PatScopeId = (typeof PAT_SCOPES)[number]["id"];
 
 export const ALL_SCOPE_IDS: PatScopeId[] = PAT_SCOPES.map((s) => s.id);
 
-/** Default mint does not include delete — a rogue agent should not wipe the board. */
-export const DEFAULT_SCOPE_IDS: PatScopeId[] = ALL_SCOPE_IDS.filter((id) => id !== "tasks:delete");
+/** Default mint: no delete, no plant, no land — a worker cannot Planted/Landed/wipe. */
+export const DEFAULT_SCOPE_IDS: PatScopeId[] = ALL_SCOPE_IDS.filter(
+  (id) => id !== "tasks:delete" && id !== "factory:plant" && id !== "factory:land",
+);
 
 const TOOL_TO_SCOPE = new Map<string, PatScopeId>();
 for (const scope of PAT_SCOPES) {

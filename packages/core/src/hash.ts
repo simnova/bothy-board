@@ -9,14 +9,6 @@ export function cacheTokenFor(workspaceId: string, revision: number, projectKey 
   return `bb-r${revision}-${sig}`;
 }
 
-export function demoMcpKey(workspaceId: string): string {
-  const digest = createHash("sha256")
-    .update(`bothy-board-demo:${workspaceId}`)
-    .digest("base64url")
-    .slice(0, 28);
-  return `bb_live_${digest}`;
-}
-
 export function hashApiKey(plaintext: string): string {
   return sha256Hex(`bothy-board-key:${plaintext}`);
 }

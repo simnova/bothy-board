@@ -53,13 +53,15 @@ You **cannot** send a new top-level prompt to a running subagent. Views are obse
 
 ## Orchestrator (parent on this machine)
 
-1. `bothy-board.tasks.next` or pick a ready task.
+`tasks.next` returns a **Planted + ready** leaf whose deps are done (`priority ASC, id ASC`). `{task:null}` means no candidate — that is success, not an error. Do not dequeue Idle cards. Do not call next until the card is Planted.
+
+1. `bothy-board.tasks.next` or pick a Planted ready task.
 2. `bothy-board.sessions.mint` `{ taskId, machineName }` — writes the UUID on the task, returns `spawnCommand`.
 3. Spawn:
    - CLI: `grok -s <grokSessionId> -w -p "Use BothyBoard MCP. Bind GROK_SESSION_ID to task <id>, then execute."`
-   - Or `spawn_subagent` with `isolation: "worktree"`, then immediately `bothy-board.sessions.bind` with the returned subagent id.
-4. `bothy-board.worktrees.register` path + branch + machine.
-5. Wait with `get_command_or_subagent_output` if background. Do not try to chat with the child.
+   - Or `spawn_subagent` with `isolation: "worktree"`, then immediately `bothy-board.sessions.bind` with the returned subagent id (`taskId` is required).
+4. `bothy-board.worktrees.register` path + branch + machine + **taskId** (exclusive; clashes fail).
+5. Land only with `bothy-board.tasks.proofs.set` `{ taskId, proofsOk, headSha }` (needs `factory:land`). Workers set `status=review`, never `done`.
 
 ## Worker (inside the Grok session)
 

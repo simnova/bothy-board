@@ -20,6 +20,7 @@ export function BoardView() {
   const [selected, setSelected] = useState<string | null>(null);
   const [view, setView] = useState<"board" | "graph">("board");
   const [draft, setDraft] = useState("");
+  const [proof, setProof] = useState("exists:");
   const [projectId, setProjectId] = useState("");
 
   const data = snap.data;
@@ -43,13 +44,19 @@ export function BoardView() {
   const selectedTask = viewData?.tasks.find((t) => t.id === selected) ?? null;
 
   const create = useMutation({
-    mutationFn: (title: string) =>
+    mutationFn: (input: { title: string; doneWhen: string }) =>
       postTask({
-        data: activeProjectId ? { title, projectId: activeProjectId } : { title },
+        data: {
+          title: input.title,
+          objective: input.title,
+          doneWhen: [input.doneWhen],
+          ...(activeProjectId ? { projectId: activeProjectId } : {}),
+        },
       }),
     onSuccess: (res) => {
       qc.setQueryData(["snapshot"], res.snapshot);
       setDraft("");
+      setProof("exists:");
     },
   });
 
@@ -141,7 +148,13 @@ export function BoardView() {
           data={viewData}
           draft={draft}
           setDraft={setDraft}
-          onCreate={() => draft.trim() && create.mutate(draft.trim())}
+          proof={proof}
+          setProof={setProof}
+          onCreate={() =>
+            draft.trim() &&
+            proof.trim().includes(":") &&
+            create.mutate({ title: draft.trim(), doneWhen: proof.trim() })
+          }
           creating={create.isPending}
           onSelect={setSelected}
           onMove={(taskId, status) => move.mutate({ taskId, status })}
@@ -159,6 +172,8 @@ function Kanban({
   data,
   draft,
   setDraft,
+  proof,
+  setProof,
   onCreate,
   creating,
   onSelect,
@@ -167,6 +182,8 @@ function Kanban({
   data: Snapshot;
   draft: string;
   setDraft: (v: string) => void;
+  proof: string;
+  setProof: (v: string) => void;
   onCreate: () => void;
   creating: boolean;
   onSelect: (id: string) => void;
@@ -195,7 +212,7 @@ function Kanban({
             </header>
             {col.id === "queue" ? (
               <form
-                className="mb-3 flex gap-2"
+                className="mb-3 space-y-2"
                 onSubmit={(e) => {
                   e.preventDefault();
                   onCreate();
@@ -204,17 +221,23 @@ function Kanban({
                 <input
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
-                  placeholder="New task"
+                  placeholder="Card title"
                   className="h-9 w-full rounded-[var(--radius-sm)] border border-border bg-bg px-2 text-sm outline-none placeholder:text-subtle focus:ring-2 focus:ring-accent/30"
+                />
+                <input
+                  value={proof}
+                  onChange={(e) => setProof(e.target.value)}
+                  placeholder="exists:path  (TREE proof)"
+                  className="h-9 w-full rounded-[var(--radius-sm)] border border-border bg-bg px-2 font-mono text-xs outline-none placeholder:text-subtle focus:ring-2 focus:ring-accent/30"
                 />
                 <Button
                   type="submit"
                   size="sm"
                   variant="secondary"
-                  disabled={creating || !draft.trim()}
-                  className="px-2"
+                  disabled={creating || !draft.trim() || !proof.includes(":")}
+                  className="w-full"
                 >
-                  <Plus className="size-4" />
+                  <Plus className="size-4" /> Add Idle card
                 </Button>
               </form>
             ) : null}
@@ -259,6 +282,7 @@ function TaskCard({
       <div className="mb-2 flex items-center gap-1.5">
         <Badge tone={kindTone(task.kind)}>{task.kind}</Badge>
         <Badge tone={statusTone(task.status)}>{task.status.replace("_", " ")}</Badge>
+        <Badge tone={task.factory === "Planted" ? "success" : "muted"}>{task.factory}</Badge>
       </div>
       <p className="text-sm font-medium leading-snug">{task.title}</p>
       <div className="mt-2 flex flex-wrap items-center gap-2 font-mono text-[10px] text-subtle">

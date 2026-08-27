@@ -5,9 +5,11 @@
     "types": ["node"],
     "rootDir": "src",
     "outDir": "dist",
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
     "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo"
   },
   "include": ["src"],
-  "exclude": ["dist", "node_modules"],
+  "exclude": ["dist", "node_modules", "src/**/*.test.ts"],
   "references": [{ "path": "../db" }]
 }

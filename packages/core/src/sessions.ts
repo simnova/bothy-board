@@ -1,6 +1,6 @@
 import { getSql, type Sql } from "@bothy-board/db";
 import { makeId, makeUuid } from "./ids";
-import { getTaskDetail, heartbeat } from "./queries";
+import { claimTask, getTaskDetail, heartbeat } from "./queries";
 import type { CommentRow } from "./types";
 import { bumpRevision } from "./workspace";
 
@@ -129,21 +129,20 @@ export async function bindSession(
   const sessionId = input.grokSessionId.trim();
   if (!sessionId) return { error: "grokSessionId required" };
 
-  let taskId = input.taskId;
+  const taskId = input.taskId;
   if (!taskId) {
-    const found = await sql<{ id: string }>`
-      select id from tasks where workspace_id = ${workspaceId} and grok_session_id = ${sessionId} and deleted_at is null limit 1`;
-    taskId = found[0]?.id;
+    return { error: "taskId required" };
   }
-  if (!taskId) return { error: "no task for this grokSessionId — mint first or pass taskId" };
 
   const rows = await sql<{
     grok_session_id: string | null;
     affinity_machine_name: string | null;
     affinity_user_id: string | null;
     status: string;
+    factory: string;
+    assignee_agent_id: string | null;
     title: string;
-  }>`select grok_session_id, affinity_machine_name, affinity_user_id, status, title
+  }>`select grok_session_id, affinity_machine_name, affinity_user_id, status, factory, assignee_agent_id, title
      from tasks where workspace_id = ${workspaceId} and id = ${taskId} and deleted_at is null`;
   const t = rows[0];
   if (!t) return { error: "task not found" };
@@ -158,6 +157,24 @@ export async function bindSession(
   );
   if (!affinity.allowed) {
     return { error: affinity.reason, parkedOn: affinity.parkedOn, allowed: false };
+  }
+
+  if (t.status === "ready" && t.factory === "Planted") {
+    try {
+      await claimTask(workspaceId, taskId, {
+        id: input.agentId,
+        name: input.name ?? "grok-build",
+        kind: input.kind ?? "grok",
+        machineName: input.machineName,
+        continuationId: sessionId,
+        grokSessionId: sessionId,
+        grokSubagentId: input.grokSubagentId,
+      });
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : "claim failed" };
+    }
+  } else if (t.status !== "claimed" && t.status !== "in_progress") {
+    return { error: "bind_without_claim" };
   }
 
   const beat = await heartbeat(workspaceId, {
@@ -177,9 +194,11 @@ export async function bindSession(
       continuation_id = ${sessionId},
       assignee_agent_id = ${beat.agentId},
       affinity_machine_name = coalesce(nullif(${input.machineName ?? ""}, ''), affinity_machine_name),
-      status = case when status in ('backlog','ready','claimed') then ${"in_progress"} else status end,
+      factory = ${"Dispatched"},
+      status = ${"in_progress"},
       updated_at = now()
-    where workspace_id = ${workspaceId} and id = ${taskId}`;
+    where workspace_id = ${workspaceId} and id = ${taskId}
+      and status in ('claimed','in_progress')`;
   await recordEvent(
     sql,
     workspaceId,

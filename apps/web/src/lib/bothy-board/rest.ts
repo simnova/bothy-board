@@ -13,7 +13,9 @@ import {
   loadSnapshot,
   mintApiKey,
   nextReady,
+  plantTask,
   registerWorktree,
+  setProofs,
   updateTask,
 } from "@bothy-board/core/queries";
 import {
@@ -63,13 +65,15 @@ export async function handleRest(request: Request): Promise<Response> {
       const blocked = deny("board:read");
       if (blocked) return blocked;
       const snap = await loadSnapshot(ws, actor.workspaceName, actor.revision, filter);
-      return withCache(snap, ws, snap.revision, request);
+      const projectKey = filter?.length ? [...filter].sort().join(",") : "";
+      return withCache(snap, ws, snap.revision, request, undefined, projectKey);
     }
     if (method === "GET" && path === "ready") {
       const blocked = deny("board:read");
       if (blocked) return blocked;
-      const task = await nextReady(ws, filter);
-      return withCache({ task }, ws, actor.revision, request);
+      const next = await nextReady(ws, filter);
+      const projectKey = filter?.length ? [...filter].sort().join(",") : "";
+      return withCache({ task: next.task }, ws, actor.revision, request, undefined, projectKey);
     }
     if (method === "GET" && path === "tasks") {
       const blocked = deny("board:read");
@@ -83,6 +87,10 @@ export async function handleRest(request: Request): Promise<Response> {
       const body = await readJson<{
         title: string;
         body?: string;
+        objective?: string;
+        doneWhen?: string[];
+        writeRoots?: string[];
+        lane?: string;
         kind?: TaskKind;
         parentId?: string;
         depIds?: string[];
@@ -105,6 +113,10 @@ export async function handleRest(request: Request): Promise<Response> {
       const blocked = deny("tasks:write");
       if (blocked) return blocked;
       const patch = await readJson<Parameters<typeof updateTask>[2]>(request);
+      patch.writer =
+        actor.type === "agent" || (actor.type === "pat" && !hasScope(actor, "factory:plant"))
+          ? "agent"
+          : "owner";
       if (patch.status === "cancelled") await enforceDestructiveLimit(actor);
       const task = await updateTask(ws, parts[1], patch);
       if (!task) return json({ error: "not found" }, 404, request);
@@ -137,6 +149,30 @@ export async function handleRest(request: Request): Promise<Response> {
         grokSubagentId: body.grokSubagentId,
       });
       return json(claimed, 200, request);
+    }
+    if (parts[0] === "tasks" && taskId && parts[2] === "plant" && method === "POST") {
+      const blocked = deny("factory:plant");
+      if (blocked && actor.type !== "user") return blocked;
+      return json({ task: await plantTask(ws, taskId) }, 200, request);
+    }
+    if (parts[0] === "tasks" && taskId && parts[2] === "proofs" && method === "POST") {
+      const blocked = deny("factory:land");
+      if (blocked) return blocked;
+      const body = await readJson<{ proofsOk?: boolean; headSha?: string; reportPath?: string }>(
+        request,
+      );
+      return json(
+        {
+          task: await setProofs(ws, {
+            taskId,
+            proofsOk: Boolean(body.proofsOk),
+            headSha: body.headSha,
+            reportPath: body.reportPath,
+          }),
+        },
+        200,
+        request,
+      );
     }
     if (
       parts[0] === "tasks" &&
@@ -313,17 +349,14 @@ export async function handleRest(request: Request): Promise<Response> {
       }>(request);
       if (!body.path || !body.branch)
         return json({ error: "path and branch required" }, 400, request);
+      if (!body.taskId) return json({ error: "taskId required" }, 400, request);
       if (body.taskId) await assertTaskAccess(actor, ws, body.taskId);
       const id = await registerWorktree(ws, body);
       return json({ id }, 201, request);
     }
     if (method === "GET" && path === "keys" && actor.type === "user") {
       const keys = await listApiKeys(ws);
-      return json(
-        { keys, mcpKey: (await loadSnapshot(ws, actor.workspaceName, actor.revision)).mcpKey },
-        200,
-        request,
-      );
+      return json({ keys }, 200, request);
     }
     if (method === "POST" && path === "keys" && actor.type === "user") {
       const body = await readJson<{ name?: string }>(request);

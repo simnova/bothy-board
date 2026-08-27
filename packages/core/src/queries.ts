@@ -1,5 +1,17 @@
 import { getSql, type Sql } from "@bothy-board/db";
-import { cacheTokenFor, demoMcpKey, newApiKey } from "./hash";
+import { assertCard, cardFromInput, serializeCard } from "./card";
+import { BoardError } from "./errors";
+import {
+  assertClaimable,
+  assertWorkerPatch,
+  dequeueIds,
+  MAX_IN_FLIGHT_PER_PROJECT,
+  parseFactory,
+  SNAPSHOT_TASK_CAP,
+  type WriterKind,
+  writeRootsOverlap,
+} from "./factory";
+import { cacheTokenFor, newApiKey } from "./hash";
 import { makeId } from "./ids";
 import { listMembers } from "./team";
 import type {
@@ -9,6 +21,7 @@ import type {
   CommentRow,
   CompactTask,
   EventRow,
+  FactoryState,
   IntegrationStatus,
   Snapshot,
   TaskDetail,
@@ -26,6 +39,15 @@ type TaskRecord = {
   body: string;
   kind: TaskKind;
   status: TaskStatus;
+  factory: string;
+  lane: string | null;
+  write_roots: unknown;
+  objective: string;
+  done_when: unknown;
+  out_of_scope: string;
+  known_good: string;
+  not_tested: string;
+  no_grade: boolean;
   priority: number;
   project_id: string;
   assignee_user_id: string | null;
@@ -43,7 +65,24 @@ type TaskRecord = {
   updated_at: string;
 };
 
-function compact(t: TaskRecord, depIds: string[]): CompactTask {
+function asStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String);
+  if (typeof value === "string") {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function jsonb(value: unknown): string {
+  return JSON.stringify(value ?? []);
+}
+
+function compact(t: TaskRecord, depIds: string[], childCount: number): CompactTask {
   return {
     id: t.id,
     parentId: t.parent_id,
@@ -51,6 +90,11 @@ function compact(t: TaskRecord, depIds: string[]): CompactTask {
     title: t.title,
     kind: t.kind,
     status: t.status,
+    factory: parseFactory(t.factory),
+    lane: t.lane,
+    writeRoots: asStringArray(t.write_roots),
+    objective: t.objective ?? "",
+    doneWhen: asStringArray(t.done_when),
     priority: t.priority,
     assigneeAgentId: t.assignee_agent_id,
     continuationId: t.continuation_id,
@@ -63,9 +107,16 @@ function compact(t: TaskRecord, depIds: string[]): CompactTask {
     integrationStatus: t.integration_status,
     blockedReason: t.blocked_reason,
     depIds,
+    childCount,
     updatedAt: t.updated_at,
   };
 }
+
+const TASK_SELECT = `id, parent_id, title, body, kind, status, factory, lane, write_roots, objective, done_when,
+  out_of_scope, known_good, not_tested, no_grade, priority, project_id,
+  assignee_user_id, assignee_agent_id, continuation_id, grok_session_id, grok_subagent_id,
+  affinity_user_id, affinity_machine_name, branch, worktree_path,
+  integration_status, blocked_reason, created_at, updated_at`;
 
 async function depMap(sql: Sql, workspaceId: string): Promise<Map<string, string[]>> {
   const rows = await sql<{ task_id: string; depends_on_id: string }>`
@@ -79,40 +130,61 @@ async function depMap(sql: Sql, workspaceId: string): Promise<Map<string, string
   return map;
 }
 
-async function loadTasks(
+async function loadTasksSafe(
   sql: Sql,
   workspaceId: string,
   projectIds?: string[] | null,
 ): Promise<TaskRecord[]> {
-  if (projectIds?.length) {
-    return sql<TaskRecord>`
-    select id, parent_id, title, body, kind, status, priority, project_id,
-           assignee_user_id, assignee_agent_id, continuation_id, grok_session_id, grok_subagent_id,
-           affinity_user_id, affinity_machine_name, branch, worktree_path,
-           integration_status, blocked_reason, created_at, updated_at
-    from tasks where workspace_id = ${workspaceId} and project_id = any(${projectIds})
-    and deleted_at is null
-    order by sort_order asc, created_at asc`;
-  }
   if (projectIds && projectIds.length === 0) return [];
-  return sql<TaskRecord>`
-    select id, parent_id, title, body, kind, status, priority, project_id,
-           assignee_user_id, assignee_agent_id, continuation_id, grok_session_id, grok_subagent_id,
-           affinity_user_id, affinity_machine_name, branch, worktree_path,
-           integration_status, blocked_reason, created_at, updated_at
-    from tasks where workspace_id = ${workspaceId} and deleted_at is null
-    order by sort_order asc, created_at asc`;
+  if (projectIds?.length) {
+    return sql.query<TaskRecord>(
+      `select ${TASK_SELECT} from tasks where workspace_id = $1 and project_id = any($2) and deleted_at is null order by sort_order asc, created_at asc`,
+      [workspaceId, projectIds],
+    );
+  }
+  return sql.query<TaskRecord>(
+    `select ${TASK_SELECT} from tasks where workspace_id = $1 and deleted_at is null order by sort_order asc, created_at asc`,
+    [workspaceId],
+  );
 }
 
-function readyIds(tasks: CompactTask[]): string[] {
-  const byId = new Map(tasks.map((t) => [t.id, t]));
-  return tasks
-    .filter((t) => {
-      if (t.status !== "ready" && t.status !== "backlog") return false;
-      if (t.status === "backlog") return false;
-      return t.depIds.every((id) => byId.get(id)?.status === "done");
-    })
-    .map((t) => t.id);
+function childCounts(tasks: { id: string; parentId: string | null }[]): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const t of tasks) {
+    if (!t.parentId) continue;
+    map.set(t.parentId, (map.get(t.parentId) ?? 0) + 1);
+  }
+  return map;
+}
+
+export async function reapStaleAgents(workspaceId: string): Promise<number> {
+  const sql = await getSql();
+  const stale = await sql<{ id: string }>`
+    select id from agents
+    where workspace_id = ${workspaceId}
+      and status <> ${"offline"}
+      and last_heartbeat is not null
+      and last_heartbeat < now() - interval '10 minutes'`;
+  if (!stale.length) return 0;
+  const ids = stale.map((r) => r.id);
+  await sql.query(`update agents set status = 'offline' where workspace_id = $1 and id = any($2)`, [
+    workspaceId,
+    ids,
+  ]);
+  const released = await sql.query<{ id: string }>(
+    `update tasks set status = 'ready', factory = 'Planted', assignee_agent_id = null, updated_at = now()
+     where workspace_id = $1 and assignee_agent_id = any($2)
+       and status in ('claimed','in_progress')
+       and factory in ('Planted','Dispatched')
+       and deleted_at is null
+     returning id`,
+    [workspaceId, ids],
+  );
+  for (const row of released) {
+    await recordEvent(sql, workspaceId, "reaped", "Claim reaped after heartbeat TTL", row.id);
+  }
+  if (released.length) await bumpRevision(sql, workspaceId);
+  return released.length;
 }
 
 export async function loadSnapshot(
@@ -123,44 +195,56 @@ export async function loadSnapshot(
 ): Promise<Snapshot> {
   const { purgeExpiredTrash } = await import("./trash");
   const purged = await purgeExpiredTrash(workspaceId);
-  const effectiveRevision = purged > 0 ? revision + 1 : revision;
+  const reaped = await reapStaleAgents(workspaceId);
+  const effectiveRevision = purged > 0 || reaped > 0 ? revision + 1 : revision;
   const sql = await getSql();
   const filter = projectIds?.length ? projectIds : null;
-  const [taskRows, agents, worktrees, events, projects, members] = await Promise.all([
-    loadTasks(sql, workspaceId, filter ?? undefined),
-    sql<AgentRow>`
+  const taskRows = await loadTasksSafe(sql, workspaceId, filter);
+  const incomplete = taskRows.length >= SNAPSHOT_TASK_CAP;
+  const visibleIds = taskRows.map((t) => t.id);
+
+  const [agents, worktrees, events, projects, members] = await Promise.all([
+    filter
+      ? sql.query<AgentRow>(
+          `select id, name, kind,
+            machine_name as "machineName",
+            continuation_id as "continuationId",
+            current_task_id as "currentTaskId",
+            status, last_heartbeat as "lastHeartbeat"
+           from agents
+           where workspace_id = $1
+             and (
+               current_task_id = any($2)
+               or id in (select agent_id from worktrees where workspace_id = $1 and project_id = any($3) and agent_id is not null)
+             )
+           order by name`,
+          [workspaceId, visibleIds.length ? visibleIds : [""], filter],
+        )
+      : sql<AgentRow>`
       select id, name, kind,
         machine_name as "machineName",
         continuation_id as "continuationId",
         current_task_id as "currentTaskId",
-        status,
-        last_heartbeat as "lastHeartbeat"
+        status, last_heartbeat as "lastHeartbeat"
       from agents where workspace_id = ${workspaceId} order by name`,
     filter
       ? sql<WorktreeRow>`
-      select id,
-        task_id as "taskId",
-        agent_id as "agentId",
-        path, branch,
-        machine_name as "machineName",
-        status,
-        updated_at as "updatedAt"
+      select id, task_id as "taskId", agent_id as "agentId", path, branch,
+        machine_name as "machineName", status, updated_at as "updatedAt"
       from worktrees where workspace_id = ${workspaceId} and project_id = any(${filter}) order by updated_at desc`
       : sql<WorktreeRow>`
-      select id,
-        task_id as "taskId",
-        agent_id as "agentId",
-        path, branch,
-        machine_name as "machineName",
-        status,
-        updated_at as "updatedAt"
+      select id, task_id as "taskId", agent_id as "agentId", path, branch,
+        machine_name as "machineName", status, updated_at as "updatedAt"
       from worktrees where workspace_id = ${workspaceId} order by updated_at desc`,
-    sql<EventRow>`
-      select id,
-        task_id as "taskId",
-        agent_id as "agentId",
-        kind, message,
-        created_at as "createdAt"
+    filter
+      ? sql<EventRow>`
+      select e.id, e.task_id as "taskId", e.agent_id as "agentId", e.kind, e.message, e.created_at as "createdAt"
+      from events e
+      join tasks t on t.id = e.task_id
+      where e.workspace_id = ${workspaceId} and t.project_id = any(${filter})
+      order by e.created_at desc limit 20`
+      : sql<EventRow>`
+      select id, task_id as "taskId", agent_id as "agentId", kind, message, created_at as "createdAt"
       from events where workspace_id = ${workspaceId} order by created_at desc limit 20`,
     filter
       ? sql<{ id: string; name: string; repo: string; defaultBranch: string; visibility: string }>`
@@ -169,10 +253,16 @@ export async function loadSnapshot(
       : sql<{ id: string; name: string; repo: string; defaultBranch: string; visibility: string }>`
       select id, name, repo, default_branch as "defaultBranch", visibility
       from projects where workspace_id = ${workspaceId} and deleted_at is null order by created_at asc`,
-    listMembers(workspaceId),
+    listMembers(workspaceId, filter),
   ]);
+
   const deps = await depMap(sql, workspaceId);
-  const tasks = taskRows.map((t) => compact(t, deps.get(t.id) ?? []));
+  const counts = childCounts(taskRows.map((t) => ({ id: t.id, parentId: t.parent_id })));
+  const tasks = taskRows.map((t) => compact(t, deps.get(t.id) ?? [], counts.get(t.id) ?? 0));
+  const visible = new Set(tasks.map((t) => t.id));
+  const scopedAgents = agents.map((a) =>
+    a.currentTaskId && !visible.has(a.currentTaskId) ? { ...a, currentTaskId: null } : a,
+  );
   const mapped = projects.map((p) => ({
     ...p,
     visibility: (p.visibility === "public" ? "public" : "private") as "public" | "private",
@@ -198,12 +288,12 @@ export async function loadSnapshot(
     cacheToken: token,
     revision: effectiveRevision,
     tasks,
-    agents,
+    agents: scopedAgents,
     worktrees,
     events,
     members,
-    readyIds: readyIds(tasks),
-    mcpKey: demoMcpKey(workspaceId),
+    readyIds: dequeueIds(tasks),
+    incomplete,
     myRole: null,
   };
 }
@@ -222,45 +312,44 @@ export async function getTaskDetail(
   taskId: string,
 ): Promise<TaskDetail | null> {
   const sql = await getSql();
-  const rows = await sql<TaskRecord>`
-    select id, parent_id, title, body, kind, status, priority, project_id,
-           assignee_user_id, assignee_agent_id, continuation_id, grok_session_id, grok_subagent_id,
-           affinity_user_id, affinity_machine_name, branch, worktree_path,
-           integration_status, blocked_reason, created_at, updated_at
-    from tasks where workspace_id = ${workspaceId} and id = ${taskId} and deleted_at is null`;
+  const rows = await sql.query<TaskRecord>(
+    `select ${TASK_SELECT} from tasks where workspace_id = $1 and id = $2 and deleted_at is null`,
+    [workspaceId, taskId],
+  );
   const t = rows[0];
   if (!t) return null;
   const deps = await sql<{ depends_on_id: string }>`
     select depends_on_id from task_deps where workspace_id = ${workspaceId} and task_id = ${taskId}`;
   const comments = await sql<CommentRow>`
-    select id,
-      task_id as "taskId",
-      author_kind as "authorKind",
-      author_name as "authorName",
-      body,
-      grok_session_id as "grokSessionId",
-      created_at as "createdAt"
+    select id, task_id as "taskId", author_kind as "authorKind", author_name as "authorName",
+      body, grok_session_id as "grokSessionId", created_at as "createdAt"
     from comments where workspace_id = ${workspaceId} and task_id = ${taskId}
     order by created_at asc`;
-  const childRows = await sql<TaskRecord>`
-    select id, parent_id, title, body, kind, status, priority, project_id,
-           assignee_user_id, assignee_agent_id, continuation_id, grok_session_id, grok_subagent_id,
-           affinity_user_id, affinity_machine_name, branch, worktree_path,
-           integration_status, blocked_reason, created_at, updated_at
-    from tasks where workspace_id = ${workspaceId} and parent_id = ${taskId} and deleted_at is null
-    order by sort_order`;
+  const childRows = await sql.query<TaskRecord>(
+    `select ${TASK_SELECT} from tasks where workspace_id = $1 and parent_id = $2 and deleted_at is null order by sort_order`,
+    [workspaceId, taskId],
+  );
   const childDeps = await depMap(sql, workspaceId);
+  const counts = childCounts([
+    { id: t.id, parentId: t.parent_id },
+    ...childRows.map((c) => ({ id: c.id, parentId: c.parent_id })),
+  ]);
   return {
     ...compact(
       t,
       deps.map((d) => d.depends_on_id),
+      counts.get(t.id) ?? childRows.length,
     ),
     body: t.body,
     projectId: t.project_id,
     assigneeUserId: t.assignee_user_id,
+    outOfScope: t.out_of_scope ?? "",
+    knownGood: t.known_good ?? "",
+    notTested: t.not_tested ?? "",
+    noGrade: Boolean(t.no_grade),
     createdAt: t.created_at,
     comments,
-    children: childRows.map((c) => compact(c, childDeps.get(c.id) ?? [])),
+    children: childRows.map((c) => compact(c, childDeps.get(c.id) ?? [], counts.get(c.id) ?? 0)),
   };
 }
 
@@ -276,38 +365,200 @@ async function recordEvent(
     values (${makeId("evt")}, ${workspaceId}, ${taskId ?? null}, ${agentId ?? null}, ${kind}, ${message})`;
 }
 
-export async function createTask(
+async function assertDepsExist(sql: Sql, workspaceId: string, depIds: string[]) {
+  if (!depIds.length) return;
+  const rows = await sql.query<{ id: string }>(
+    `select id from tasks where workspace_id = $1 and id = any($2) and deleted_at is null`,
+    [workspaceId, depIds],
+  );
+  if (rows.length !== depIds.length) {
+    throw new BoardError("dep_missing", "Dependency is missing or in trash.");
+  }
+}
+
+async function wouldCycle(
+  sql: Sql,
   workspaceId: string,
-  input: {
-    title: string;
-    body?: string | undefined;
-    kind?: TaskKind | undefined;
-    parentId?: string | null | undefined;
-    depIds?: string[] | undefined;
-    priority?: number | undefined;
-    projectId?: string | undefined;
-  },
-) {
+  taskId: string,
+  dependsOnId: string,
+): Promise<boolean> {
+  if (taskId === dependsOnId) return true;
+  const rows = await sql<{ task_id: string; depends_on_id: string }>`
+    select task_id, depends_on_id from task_deps where workspace_id = ${workspaceId}`;
+  const adj = new Map<string, string[]>();
+  for (const r of rows) {
+    const list = adj.get(r.task_id) ?? [];
+    list.push(r.depends_on_id);
+    adj.set(r.task_id, list);
+  }
+  const stack = [...(adj.get(dependsOnId) ?? [])];
+  const seen = new Set<string>();
+  while (stack.length) {
+    const n = stack.pop();
+    if (!n || seen.has(n)) continue;
+    if (n === taskId) return true;
+    seen.add(n);
+    stack.push(...(adj.get(n) ?? []));
+  }
+  return false;
+}
+
+export type CreateTaskInput = {
+  title: string;
+  body?: string | undefined;
+  kind?: TaskKind | undefined;
+  parentId?: string | null | undefined;
+  depIds?: string[] | undefined;
+  priority?: number | undefined;
+  projectId?: string | undefined;
+  objective?: string | undefined;
+  doneWhen?: string[] | undefined;
+  writeRoots?: string[] | undefined;
+  lane?: string | null | undefined;
+  knownGood?: string | undefined;
+  outOfScope?: string | undefined;
+  notTested?: string | undefined;
+  extra?: Record<string, string> | undefined;
+};
+
+export async function createTask(workspaceId: string, input: CreateTaskInput) {
   const sql = await getSql();
   const projectId =
     input.projectId ||
     (
-      await sql<{
-        id: string;
-      }>`select id from projects where workspace_id = ${workspaceId} and deleted_at is null order by created_at asc limit 1`
+      await sql<{ id: string }>`
+        select id from projects where workspace_id = ${workspaceId} and deleted_at is null order by created_at asc limit 1`
     )[0]?.id;
-  if (!projectId) throw new Error("This board has no project.");
+  if (!projectId) throw new BoardError("no_project", "This board has no project.");
+  const title = input.title.trim();
+  const card = cardFromInput({ ...input, title });
+  if (!card.objective) card.objective = title;
+  assertCard(card, "create", title);
+  const body = serializeCard(card);
+  await assertDepsExist(sql, workspaceId, input.depIds ?? []);
+  for (const dep of input.depIds ?? []) {
+    const id = makeId("tsk");
+    if (await wouldCycle(sql, workspaceId, id, dep)) {
+      throw new BoardError("cycle", "Dependency cycle refused.");
+    }
+  }
   const id = makeId("tsk");
-  await sql`insert into tasks (id, workspace_id, project_id, parent_id, title, body, kind, status, priority)
-    values (${id}, ${workspaceId}, ${projectId}, ${input.parentId ?? null}, ${input.title.trim()},
-      ${input.body ?? ""}, ${input.kind ?? "feature"}, ${"backlog"}, ${input.priority ?? 1})`;
+  await sql.query(
+    `insert into tasks (
+       id, workspace_id, project_id, parent_id, title, body, kind, status, factory, priority,
+       lane, write_roots, objective, done_when, out_of_scope, known_good, not_tested
+     ) values ($1,$2,$3,$4,$5,$6,$7,'backlog','Idle',$8,$9,$10::jsonb,$11,$12::jsonb,$13,$14,$15)`,
+    [
+      id,
+      workspaceId,
+      projectId,
+      input.parentId ?? null,
+      title,
+      body,
+      input.kind ?? "feature",
+      input.priority ?? 1,
+      card.lane,
+      jsonb(card.writeRoots),
+      card.objective,
+      jsonb(card.doneWhen),
+      card.outOfScope,
+      card.knownGood,
+      card.notTested,
+    ],
+  );
   for (const dep of input.depIds ?? []) {
     await sql`insert into task_deps (workspace_id, task_id, depends_on_id)
       values (${workspaceId}, ${id}, ${dep})`;
   }
-  await recordEvent(sql, workspaceId, "create", `Created ${input.title.trim()}`, id);
+  await recordEvent(sql, workspaceId, "create", `Created ${title}`, id);
   await bumpRevision(sql, workspaceId);
   return id;
+}
+
+export async function plantTask(workspaceId: string, taskId: string) {
+  const sql = await getSql();
+  const rows = await sql.query<TaskRecord>(
+    `select ${TASK_SELECT} from tasks where workspace_id = $1 and id = $2 and deleted_at is null`,
+    [workspaceId, taskId],
+  );
+  const t = rows[0];
+  if (!t) throw new BoardError("not_found", "Task not found.");
+  if (parseFactory(t.factory) !== "Idle") {
+    throw new BoardError("forbidden", "Only Idle tasks can be Planted.");
+  }
+  const card = cardFromInput({
+    title: t.title,
+    body: t.body,
+    objective: t.objective,
+    doneWhen: asStringArray(t.done_when),
+    writeRoots: asStringArray(t.write_roots),
+    lane: t.lane,
+    knownGood: t.known_good,
+    outOfScope: t.out_of_scope,
+    notTested: t.not_tested,
+  });
+  assertCard(card, "plant", t.title);
+  const body = serializeCard(card);
+  await sql.query(
+    `update tasks set factory = 'Planted', status = 'ready', body = $3,
+      objective = $4, done_when = $5::jsonb, write_roots = $6::jsonb, lane = $7, updated_at = now()
+     where workspace_id = $1 and id = $2 and factory = 'Idle'`,
+    [
+      workspaceId,
+      taskId,
+      body,
+      card.objective,
+      jsonb(card.doneWhen),
+      jsonb(card.writeRoots),
+      card.lane,
+    ],
+  );
+  await recordEvent(sql, workspaceId, "plant", `${t.title} Planted`, taskId);
+  await bumpRevision(sql, workspaceId);
+  return getTaskDetail(workspaceId, taskId);
+}
+
+export async function setProofs(
+  workspaceId: string,
+  input: {
+    taskId: string;
+    proofsOk: boolean;
+    headSha?: string | undefined;
+    reportPath?: string | undefined;
+  },
+) {
+  const sql = await getSql();
+  const rows = await sql.query<{
+    factory: string;
+    status: string;
+    title: string;
+    no_grade: boolean;
+  }>(
+    `select factory, status, title, no_grade from tasks where workspace_id = $1 and id = $2 and deleted_at is null`,
+    [workspaceId, input.taskId],
+  );
+  const t = rows[0];
+  if (!t) throw new BoardError("not_found", "Task not found.");
+  if (!input.proofsOk) {
+    await sql`update tasks set proofs_ok = false, blocked_reason = ${"proofs failed"},
+      status = ${"blocked"}, updated_at = now()
+      where workspace_id = ${workspaceId} and id = ${input.taskId}`;
+    await recordEvent(sql, workspaceId, "proofs", "proofsOk=false", input.taskId);
+    await bumpRevision(sql, workspaceId);
+    return getTaskDetail(workspaceId, input.taskId);
+  }
+  if (t.status !== "review" && t.status !== "integrating") {
+    throw new BoardError("forbidden", "proofs.set requires status=review.");
+  }
+  await sql.query(
+    `update tasks set factory = 'Landed', status = 'integrating', proofs_ok = true,
+      proofs_head_sha = $3, proofs_report_path = $4, updated_at = now()
+     where workspace_id = $1 and id = $2`,
+    [workspaceId, input.taskId, input.headSha ?? null, input.reportPath ?? null],
+  );
+  await recordEvent(sql, workspaceId, "landed", `${t.title} Landed`, input.taskId);
+  await bumpRevision(sql, workspaceId);
+  return getTaskDetail(workspaceId, input.taskId);
 }
 
 export async function updateTask(
@@ -317,6 +568,7 @@ export async function updateTask(
     title?: string | undefined;
     body?: string | undefined;
     status?: TaskStatus | undefined;
+    factory?: FactoryState | undefined;
     kind?: TaskKind | undefined;
     priority?: number | undefined;
     continuationId?: string | null | undefined;
@@ -329,22 +581,33 @@ export async function updateTask(
     integrationStatus?: IntegrationStatus | undefined;
     blockedReason?: string | null | undefined;
     assigneeAgentId?: string | null | undefined;
+    writer?: WriterKind | undefined;
   },
 ) {
   const sql = await getSql();
-  const current = await sql<TaskRecord>`
-    select id, parent_id, title, body, kind, status, priority, project_id,
-           assignee_user_id, assignee_agent_id, continuation_id, grok_session_id, grok_subagent_id,
-           affinity_user_id, affinity_machine_name, branch, worktree_path,
-           integration_status, blocked_reason, created_at, updated_at
-    from tasks where workspace_id = ${workspaceId} and id = ${taskId} and deleted_at is null`;
+  const current = await sql.query<TaskRecord>(
+    `select ${TASK_SELECT} from tasks where workspace_id = $1 and id = $2 and deleted_at is null`,
+    [workspaceId, taskId],
+  );
   const t = current[0];
   if (!t) return null;
+  const writer = patch.writer ?? "owner";
+  if (writer === "agent") assertWorkerPatch({ status: patch.status, factory: patch.factory });
+  if (writer !== "orchestrator" && writer !== "owner" && patch.factory === "Landed") {
+    throw new BoardError("forbidden", "Only proofs.set lands a task.");
+  }
+  if (patch.status === "done" && parseFactory(t.factory) !== "Landed" && !t.no_grade) {
+    throw new BoardError("forbidden", "done requires factory=Landed.");
+  }
+  if (patch.factory === "Graded" && parseFactory(t.factory) !== "Landed") {
+    throw new BoardError("forbidden", "Grade requires Landed.");
+  }
   const next = {
     title: patch.title ?? t.title,
     body: patch.body ?? t.body,
     status: patch.status ?? t.status,
     kind: patch.kind ?? t.kind,
+    factory: patch.factory ?? parseFactory(t.factory),
     priority: patch.priority ?? t.priority,
     continuationId: patch.continuationId === undefined ? t.continuation_id : patch.continuationId,
     grokSessionId: patch.grokSessionId === undefined ? t.grok_session_id : patch.grokSessionId,
@@ -361,6 +624,7 @@ export async function updateTask(
   };
   await sql`update tasks set
       title = ${next.title}, body = ${next.body}, status = ${next.status}, kind = ${next.kind},
+      factory = ${next.factory},
       priority = ${next.priority}, continuation_id = ${next.continuationId},
       grok_session_id = ${next.grokSessionId}, grok_subagent_id = ${next.grokSubagentId},
       affinity_machine_name = ${next.affinityMachineName}, affinity_user_id = ${next.affinityUserId},
@@ -382,6 +646,69 @@ export async function updateTask(
   return getTaskDetail(workspaceId, taskId);
 }
 
+async function ensureAgent(
+  sql: Sql,
+  workspaceId: string,
+  agent: {
+    id?: string | undefined;
+    name: string;
+    kind?: AgentKind | undefined;
+    machineName?: string | undefined;
+    continuationId: string;
+    taskId?: string | null;
+  },
+): Promise<string> {
+  let agentId = agent.id;
+  if (agentId) {
+    const found = await sql<{ id: string }>`
+      select id from agents where workspace_id = ${workspaceId} and id = ${agentId}`;
+    if (!found[0]) agentId = undefined;
+  }
+  if (!agentId) {
+    agentId = makeId("agt");
+    await sql`insert into agents (id, workspace_id, name, kind, machine_name, continuation_id, current_task_id, status, last_heartbeat)
+      values (${agentId}, ${workspaceId}, ${agent.name}, ${agent.kind ?? "other"}, ${agent.machineName ?? ""},
+        ${agent.continuationId}, ${agent.taskId ?? null}, ${"working"}, now())`;
+  } else {
+    await sql`update agents set continuation_id = ${agent.continuationId}, current_task_id = ${agent.taskId ?? null},
+      status = ${"working"}, last_heartbeat = now(),
+      machine_name = coalesce(nullif(${agent.machineName ?? ""}, ''), machine_name)
+      where workspace_id = ${workspaceId} and id = ${agentId}`;
+  }
+  return agentId;
+}
+
+async function assertLaneFree(sql: Sql, workspaceId: string, task: TaskRecord) {
+  const inflight = await sql.query<{
+    id: string;
+    write_roots: unknown;
+    status: string;
+    factory: string;
+  }>(
+    `select id, write_roots, status, factory from tasks
+     where workspace_id = $1 and project_id = $2 and deleted_at is null
+       and id <> $3
+       and status in ('claimed','in_progress','review')
+       and factory in ('Planted','Dispatched')`,
+    [workspaceId, task.project_id, task.id],
+  );
+  const mine = asStringArray(task.write_roots);
+  const overlapping = inflight.filter((row) =>
+    writeRootsOverlap(mine, asStringArray(row.write_roots)),
+  );
+  if (overlapping.length >= 1 && mine.length === 0) {
+    if (inflight.length >= MAX_IN_FLIGHT_PER_PROJECT) {
+      throw new BoardError("lane_busy", "N=2 in-flight cap for this project.");
+    }
+  }
+  if (inflight.length >= MAX_IN_FLIGHT_PER_PROJECT) {
+    throw new BoardError("lane_busy", "N=2 in-flight cap for this project.");
+  }
+  if (overlapping.length && inflight.length >= 1 && mine.length) {
+    throw new BoardError("lane_busy", "write_roots overlap an in-flight task.");
+  }
+}
+
 export async function claimTask(
   workspaceId: string,
   taskId: string,
@@ -395,33 +722,56 @@ export async function claimTask(
     grokSubagentId?: string | undefined;
   },
 ) {
+  await reapStaleAgents(workspaceId);
   const sql = await getSql();
-  let agentId = agent.id;
-  if (agentId) {
-    const found = await sql<{
-      id: string;
-    }>`select id from agents where workspace_id = ${workspaceId} and id = ${agentId}`;
-    if (!found[0]) agentId = undefined;
-  }
   const grokSessionId = agent.grokSessionId ?? null;
   const continuationId = agent.continuationId ?? grokSessionId ?? makeId("cont");
-  if (!agentId) {
-    agentId = makeId("agt");
-    await sql`insert into agents (id, workspace_id, name, kind, machine_name, continuation_id, current_task_id, status, last_heartbeat)
-      values (${agentId}, ${workspaceId}, ${agent.name}, ${agent.kind ?? "other"}, ${agent.machineName ?? ""},
-        ${continuationId}, ${taskId}, ${"working"}, now())`;
-  } else {
-    await sql`update agents set continuation_id = ${continuationId}, current_task_id = ${taskId},
-      status = ${"working"}, last_heartbeat = now(), machine_name = coalesce(nullif(${agent.machineName ?? ""}, ''), machine_name)
-      where workspace_id = ${workspaceId} and id = ${agentId}`;
-  }
-  await sql`update tasks set status = ${"claimed"}, assignee_agent_id = ${agentId},
-    continuation_id = ${continuationId},
-    grok_session_id = coalesce(${grokSessionId}, grok_session_id),
-    grok_subagent_id = coalesce(${agent.grokSubagentId ?? null}, grok_subagent_id),
-    affinity_machine_name = coalesce(nullif(${agent.machineName ?? ""}, ''), affinity_machine_name),
-    updated_at = now()
-    where workspace_id = ${workspaceId} and id = ${taskId}`;
+  const current = await sql.query<TaskRecord>(
+    `select ${TASK_SELECT} from tasks where workspace_id = $1 and id = $2 and deleted_at is null`,
+    [workspaceId, taskId],
+  );
+  const t = current[0];
+  if (!t) throw new BoardError("not_found", "Task not found.");
+  const kids = await sql<{ n: number }>`
+    select count(*)::int as n from tasks where workspace_id = ${workspaceId} and parent_id = ${taskId} and deleted_at is null`;
+  assertClaimable({
+    status: t.status,
+    factory: parseFactory(t.factory),
+    assigneeAgentId: t.assignee_agent_id,
+    childCount: kids[0]?.n ?? 0,
+  });
+  await assertLaneFree(sql, workspaceId, t);
+  const agentId = await ensureAgent(sql, workspaceId, {
+    ...agent,
+    continuationId,
+    taskId,
+  });
+  await sql.query(
+    `update tasks set status = 'ready', factory = 'Planted', assignee_agent_id = null, updated_at = now()
+     where workspace_id = $1 and assignee_agent_id = $2 and id <> $3 and status = 'claimed' and deleted_at is null`,
+    [workspaceId, agentId, taskId],
+  );
+  const won = await sql.query<{ id: string }>(
+    `update tasks set status = 'claimed', assignee_agent_id = $3, continuation_id = $4,
+      grok_session_id = coalesce($5, grok_session_id),
+      grok_subagent_id = coalesce($6, grok_subagent_id),
+      affinity_machine_name = coalesce(nullif($7, ''), affinity_machine_name),
+      updated_at = now()
+     where workspace_id = $1 and id = $2
+       and status = 'ready' and factory = 'Planted'
+       and assignee_agent_id is null and deleted_at is null
+     returning id`,
+    [
+      workspaceId,
+      taskId,
+      agentId,
+      continuationId,
+      grokSessionId,
+      agent.grokSubagentId ?? null,
+      agent.machineName ?? "",
+    ],
+  );
+  if (!won[0]) throw new BoardError("already_claimed", "Task already claimed.");
   await recordEvent(sql, workspaceId, "claim", `${agent.name} claimed task`, taskId, agentId);
   await bumpRevision(sql, workspaceId);
   return {
@@ -436,27 +786,71 @@ export async function claimTask(
 export async function decomposeTask(
   workspaceId: string,
   taskId: string,
-  children: { title: string; body?: string | undefined; kind?: TaskKind | undefined }[],
+  children: {
+    title: string;
+    body?: string | undefined;
+    kind?: TaskKind | undefined;
+    depIds?: string[];
+  }[],
 ) {
   const sql = await getSql();
-  const parent = await sql<{ id: string; project_id: string; title: string }>`
-    select id, project_id, title from tasks where workspace_id = ${workspaceId} and id = ${taskId} and deleted_at is null`;
+  const parent = await sql.query<TaskRecord>(
+    `select ${TASK_SELECT} from tasks where workspace_id = $1 and id = $2 and deleted_at is null`,
+    [workspaceId, taskId],
+  );
   if (!parent[0]) return [];
+  const p = parent[0];
   const ids: string[] = [];
   for (const child of children) {
+    const card = cardFromInput({
+      title: child.title,
+      body: child.body ?? p.body,
+      objective: p.objective,
+      doneWhen: asStringArray(p.done_when),
+      writeRoots: asStringArray(p.write_roots),
+      lane: p.lane,
+    });
+    if (!card.objective) card.objective = child.title.trim();
+    assertCard(card, "create", child.title);
     const id = makeId("tsk");
-    await sql`insert into tasks (id, workspace_id, project_id, parent_id, title, body, kind, status, priority)
-      values (${id}, ${workspaceId}, ${parent[0].project_id}, ${taskId}, ${child.title},
-        ${child.body ?? ""}, ${child.kind ?? "feature"}, ${"backlog"}, 1)`;
-    await sql`insert into task_deps (workspace_id, task_id, depends_on_id)
-      values (${workspaceId}, ${id}, ${taskId})`;
+    await sql.query(
+      `insert into tasks (
+         id, workspace_id, project_id, parent_id, title, body, kind, status, factory, priority,
+         lane, write_roots, objective, done_when, out_of_scope, known_good, not_tested
+       ) values ($1,$2,$3,$4,$5,$6,$7,'backlog','Idle',1,$8,$9::jsonb,$10,$11::jsonb,$12,$13,$14)`,
+      [
+        id,
+        workspaceId,
+        p.project_id,
+        taskId,
+        child.title.trim(),
+        serializeCard(card),
+        child.kind ?? p.kind,
+        card.lane,
+        jsonb(card.writeRoots),
+        card.objective,
+        jsonb(card.doneWhen),
+        card.outOfScope || p.out_of_scope,
+        card.knownGood || p.known_good,
+        card.notTested || p.not_tested,
+      ],
+    );
+    for (const dep of child.depIds ?? []) {
+      if (dep === taskId) continue;
+      await assertDepsExist(sql, workspaceId, [dep]);
+      if (await wouldCycle(sql, workspaceId, id, dep)) {
+        throw new BoardError("cycle", "Dependency cycle refused.");
+      }
+      await sql`insert into task_deps (workspace_id, task_id, depends_on_id)
+        values (${workspaceId}, ${id}, ${dep})`;
+    }
     ids.push(id);
   }
   await recordEvent(
     sql,
     workspaceId,
     "decompose",
-    `Split ${parent[0].title} into ${ids.length} tasks`,
+    `Split ${p.title} into ${ids.length} tasks`,
     taskId,
   );
   await bumpRevision(sql, workspaceId);
@@ -505,13 +899,13 @@ export async function heartbeat(
     status?: AgentStatus | undefined;
   },
 ) {
+  await reapStaleAgents(workspaceId);
   const sql = await getSql();
   const continuationId = input.continuationId ?? input.grokSessionId ?? makeId("cont");
   let agentId = input.agentId;
   if (agentId) {
-    const found = await sql<{
-      id: string;
-    }>`select id from agents where workspace_id = ${workspaceId} and id = ${agentId}`;
+    const found = await sql<{ id: string }>`
+      select id from agents where workspace_id = ${workspaceId} and id = ${agentId}`;
     if (!found[0]) agentId = undefined;
   }
   if (!agentId && input.continuationId) {
@@ -531,26 +925,21 @@ export async function heartbeat(
       values (${agentId}, ${workspaceId}, ${input.name}, ${input.kind ?? "other"}, ${input.machineName ?? ""},
         ${continuationId}, ${input.currentTaskId ?? null}, ${input.status ?? "working"}, now())`;
   } else {
+    const owned = await sql<{ id: string }>`
+      select id from tasks
+      where workspace_id = ${workspaceId} and id = ${input.currentTaskId ?? ""}
+        and assignee_agent_id = ${agentId} and deleted_at is null`;
+    const taskId = owned[0]?.id ?? null;
     await sql`update agents set
       name = ${input.name},
       kind = ${input.kind ?? "other"},
       machine_name = coalesce(nullif(${input.machineName ?? ""}, ''), machine_name),
       continuation_id = ${continuationId},
-      current_task_id = ${input.currentTaskId ?? null},
+      current_task_id = ${taskId},
       status = ${input.status ?? "working"},
       last_heartbeat = now()
       where workspace_id = ${workspaceId} and id = ${agentId}`;
   }
-  if (input.currentTaskId) {
-    await sql`update tasks set
-      continuation_id = ${continuationId},
-      grok_session_id = coalesce(${input.grokSessionId ?? null}, grok_session_id),
-      assignee_agent_id = ${agentId},
-      affinity_machine_name = coalesce(nullif(${input.machineName ?? ""}, ''), affinity_machine_name),
-      updated_at = now()
-      where workspace_id = ${workspaceId} and id = ${input.currentTaskId}`;
-  }
-  await bumpRevision(sql, workspaceId);
   return { agentId, continuationId, grokSessionId: input.grokSessionId ?? null };
 }
 
@@ -565,18 +954,28 @@ export async function registerWorktree(
     status?: WorktreeStatus | undefined;
   },
 ) {
+  if (!input.taskId) throw new BoardError("task_required", "worktrees.register requires taskId.");
   const sql = await getSql();
-  let projectId = "";
-  if (input.taskId) {
-    const task = await sql<{ project_id: string }>`
-      select project_id from tasks where workspace_id = ${workspaceId} and id = ${input.taskId} and deleted_at is null limit 1`;
-    projectId = task[0]?.project_id ?? "";
+  const task = await sql<{ project_id: string }>`
+    select project_id from tasks where workspace_id = ${workspaceId} and id = ${input.taskId} and deleted_at is null limit 1`;
+  const projectId = task[0]?.project_id;
+  if (!projectId) throw new BoardError("not_found", "Task not found.");
+  const clashAgent = await sql<{ agent_id: string | null }>`
+    select agent_id from worktrees
+    where workspace_id = ${workspaceId} and status = ${"active"}
+      and path = ${input.path} and machine_name = ${input.machineName ?? ""}
+      and agent_id is not null and agent_id <> ${input.agentId ?? ""}
+    limit 1`;
+  if (clashAgent[0]) {
+    throw new BoardError("worktree_busy", "Path is active for another agent on this machine.");
   }
-  if (!projectId) {
-    const projects = await sql<{
-      id: string;
-    }>`select id from projects where workspace_id = ${workspaceId} and deleted_at is null order by created_at asc limit 1`;
-    projectId = projects[0]?.id ?? "";
+  const clashMachine = await sql<{ machine_name: string }>`
+    select machine_name from worktrees
+    where workspace_id = ${workspaceId} and status = ${"active"}
+      and path = ${input.path} and machine_name <> ${input.machineName ?? ""}
+    limit 1`;
+  if (clashMachine[0]) {
+    throw new BoardError("worktree_busy", `Path is active on ${clashMachine[0].machine_name}.`);
   }
   const existing = await sql<{ id: string }>`
     select id from worktrees
@@ -592,10 +991,8 @@ export async function registerWorktree(
       values (${id}, ${workspaceId}, ${projectId}, ${input.agentId ?? null}, ${input.taskId ?? null},
         ${input.path}, ${input.branch}, ${input.machineName ?? ""}, ${input.status ?? "active"})`;
   }
-  if (input.taskId) {
-    await sql`update tasks set branch = ${input.branch}, worktree_path = ${input.path}, updated_at = now()
-      where workspace_id = ${workspaceId} and id = ${input.taskId}`;
-  }
+  await sql`update tasks set branch = ${input.branch}, worktree_path = ${input.path}, updated_at = now()
+    where workspace_id = ${workspaceId} and id = ${input.taskId}`;
   await recordEvent(
     sql,
     workspaceId,
@@ -609,15 +1006,29 @@ export async function registerWorktree(
 }
 
 export async function nextReady(workspaceId: string, projectIds?: string[] | null) {
+  await reapStaleAgents(workspaceId);
   const sql = await getSql();
-  const ws = await sql<{
-    name: string;
-    revision: number;
-  }>`select name, revision from workspaces where id = ${workspaceId}`;
-  if (!ws[0]) return null;
+  const ws = await sql<{ name: string; revision: number }>`
+    select name, revision from workspaces where id = ${workspaceId}`;
+  if (!ws[0]) return { task: null as CompactTask | null, incomplete: false };
+  const count = await sql<{ n: number }>`
+    select count(*)::int as n from tasks where workspace_id = ${workspaceId} and deleted_at is null`;
+  if ((count[0]?.n ?? 0) > SNAPSHOT_TASK_CAP) {
+    throw new BoardError(
+      "snapshot_incomplete",
+      "Snapshot truncated — refuse next rather than rank a prefix.",
+    );
+  }
   const snap = await loadSnapshot(workspaceId, ws[0].name, ws[0].revision, projectIds);
-  const next = snap.tasks.find((t) => snap.readyIds.includes(t.id));
-  return next ?? null;
+  if (snap.incomplete) {
+    throw new BoardError(
+      "snapshot_incomplete",
+      "Snapshot truncated — refuse next rather than rank a prefix.",
+    );
+  }
+  const id = snap.readyIds[0];
+  const task = id ? (snap.tasks.find((t) => t.id === id) ?? null) : null;
+  return { task, incomplete: false };
 }
 
 export async function mintApiKey(workspaceId: string, userId: string, name: string) {

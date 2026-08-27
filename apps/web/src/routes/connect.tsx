@@ -6,7 +6,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { RequireAuth } from "@/components/bothy-board/gate";
-import { getSnapshot, getTokens, postRevokeToken, postToken } from "@/lib/bothy-board/server-fns";
+import { getTokens, postRevokeToken, postToken } from "@/lib/bothy-board/server-fns";
 
 export const Route = createFileRoute("/connect")({ component: ConnectPage });
 
@@ -19,14 +19,13 @@ function ConnectPage() {
 }
 
 function Connect() {
-  const snap = useQuery({ queryKey: ["snapshot"], queryFn: () => getSnapshot() });
   const [log, setLog] = useState<string>("");
   const [token, setToken] = useState<string>("");
   const [pat, setPat] = useState<string>("");
   const inspect = useMutation({
     mutationFn: async () => {
-      const key = pat || snap.data?.mcpKey;
-      if (!key) throw new Error("No MCP key");
+      const key = pat;
+      if (!key) throw new Error("Mint or paste a PAT first");
       const headers: Record<string, string> = {
         Authorization: `Bearer ${key}`,
         "Content-Type": "application/json",
@@ -70,10 +69,9 @@ function Connect() {
     onError: (err) => setLog((err as Error).message),
   });
 
-  const data = snap.data;
   const origin =
     typeof window !== "undefined" ? window.location.origin : "https://your-app.grok.me";
-  const bearer = pat || data?.mcpKey || "bb_pat_…";
+  const bearer = pat || "bb_pat_…";
   const mcpSnippet = `{
   "mcpServers": {
     "bothy-board": {
@@ -99,19 +97,6 @@ function Connect() {
 
       <PersonalTokens onPlaintext={setPat} active={pat} />
 
-      <section className="rounded-[var(--radius-lg)] border border-border bg-surface p-4">
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <h2 className="text-sm font-medium">Shared workspace key</h2>
-          <Badge>bb_live</Badge>
-        </div>
-        <code className="block break-all rounded-[var(--radius-sm)] bg-bg px-3 py-3 font-mono text-xs">
-          {data?.mcpKey ?? "loading…"}
-        </code>
-        <p className="mt-2 text-xs text-subtle">
-          Full access for this board. Prefer a personal token above. This key is the same for every
-          member.
-        </p>
-      </section>
       <section>
         <h2 className="mb-2 text-sm font-medium">Client config</h2>
         <pre className="overflow-x-auto rounded-[var(--radius-lg)] border border-border bg-bg p-4 font-mono text-xs leading-relaxed">
@@ -170,7 +155,7 @@ function Connect() {
           <Button
             variant="secondary"
             onClick={() => inspect.mutate()}
-            disabled={inspect.isPending || !data}
+            disabled={inspect.isPending || !pat}
           >
             Run initialize + tools/list + sync
           </Button>
