@@ -31,10 +31,11 @@ test("factory template keys stay underscored", () => {
   assert.equal(unblocks?.requiredWhen?.field, "factory_step");
 });
 
-test("dumpFields emits factory_step not factory-step", () => {
+test("dumpFields emits factory_step not factory-step and skips lane", () => {
   const extra = dumpFields(schema, { factory_step: "body_param", lane: "A" });
   assert.equal(extra["factory_step"], "body_param");
   assert.equal(extra["factory-step"], undefined);
+  assert.equal(extra["lane"], undefined);
 });
 
 test("create without factory_step refused when template applied", () => {

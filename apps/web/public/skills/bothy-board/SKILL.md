@@ -73,6 +73,7 @@ Always pass `cacheToken` from the last `bothy-board.sync`. `{unchanged:true}` �
 Create needs title **and** objective. Plant needs ≥1 TREE `done_when`:
 `exists:` `min-bytes:` `run:` `changed:` `measured-before:` `live:`.
 Narrative-only (`handoff:` / `skeptic:`) is refused. `run:` binaries: pnpm|node|tsx|git — no shell metachar.
+Project `requiredWhen` fields (e.g. factory_step clothing token, instrument unblocks) also refuse **create**, not only plant.
 
 After Planted the contract is frozen for workers. Owner plants; workers execute.
 

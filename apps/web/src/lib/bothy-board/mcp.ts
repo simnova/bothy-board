@@ -1,4 +1,5 @@
 import { assertTaskAccess, resolveWriteProject } from "@bothy-board/core/access";
+import { isBoardError } from "@bothy-board/core/errors";
 import type { WriterKind } from "@bothy-board/core/factory";
 import { corsHeaders, json } from "@bothy-board/core/http";
 import {
@@ -122,6 +123,9 @@ const TOOLS = [
         doneWhen: { type: "array", items: { type: "string" } },
         writeRoots: { type: "array", items: { type: "string" } },
         lane: { type: "string" },
+        knownGood: { type: "string" },
+        outOfScope: { type: "string" },
+        notTested: { type: "string" },
         kind: { type: "string" },
         parentId: { type: "string" },
         projectId: {
@@ -539,6 +543,9 @@ async function callTool(
             ? args["writeRoots"].map(String)
             : undefined,
           lane: str(args, "lane"),
+          knownGood: str(args, "knownGood"),
+          outOfScope: str(args, "outOfScope"),
+          notTested: str(args, "notTested"),
           kind: args["kind"] as TaskKind | undefined,
           parentId: str(args, "parentId") ?? null,
           depIds: Array.isArray(args["depIds"]) ? args["depIds"].map(String) : [],
@@ -811,11 +818,7 @@ export async function handleMcp(request: Request): Promise<Response> {
     const params = rpc.params ?? {};
     const grokSessionHeader = request.headers.get("x-grok-session-id") ?? undefined;
     const toolName = method === "tools/call" ? String(params["name"] ?? "") : "";
-    const toolArgs = (params["arguments"] as Record<string, unknown> | undefined) ?? {};
-    let kind = mcpKind(method, toolName);
-    if (toolName === "bothy-board.tasks.update" && toolArgs["status"] === "cancelled") {
-      kind = "destructive";
-    }
+    const kind = mcpKind(method, toolName);
     await enforceActorLimit(actor, kind);
 
     if (method === "initialize") {
@@ -823,7 +826,7 @@ export async function handleMcp(request: Request): Promise<Response> {
         ok(id, {
           protocolVersion: PROTOCOL,
           capabilities: { tools: { listChanged: false }, resources: { listChanged: false } },
-          serverInfo: { name: "bothy-board", version: "0.4.0" },
+          serverInfo: { name: "bothy-board", version: "0.4.1" },
           instructions: INSTRUCTIONS,
         }),
         200,
@@ -881,7 +884,8 @@ export async function handleMcp(request: Request): Promise<Response> {
         return json(ok(id, result), 200, request);
       } catch (err) {
         const message = err instanceof Error ? err.message : "tool error";
-        return json(ok(id, toolResult({ error: message }, true)), 200, request);
+        const code = isBoardError(err) ? err.code : undefined;
+        return json(ok(id, toolResult({ error: message, code }, true)), 200, request);
       }
     }
     return json(fail(id, -32601, `unknown method ${method}`), 200, request);

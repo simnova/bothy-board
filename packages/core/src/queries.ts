@@ -888,10 +888,18 @@ export async function claimTask(
     continuationId,
     taskId,
   });
+  const held = await sql<{ id: string; status: string }>`
+    select id, status from tasks
+    where workspace_id = ${workspaceId} and assignee_agent_id = ${agentId}
+      and id <> ${taskId} and deleted_at is null
+      and status in ('claimed', 'in_progress')`;
+  if (held.some((row) => row.status === "in_progress")) {
+    throw new BoardError("lane_busy", "This agent already has in-progress work; release first.");
+  }
   await sql.query(
     `update tasks set status = 'ready', factory = 'Planted', assignee_agent_id = null, updated_at = now()
      where workspace_id = $1 and assignee_agent_id = $2 and id <> $3
-       and status in ('claimed', 'in_progress') and deleted_at is null`,
+       and status = 'claimed' and deleted_at is null`,
     [workspaceId, agentId, taskId],
   );
   const won = await sql.query<{ id: string }>(

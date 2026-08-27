@@ -116,6 +116,8 @@ test("canonical body round-trips extra headings for consumer parsers", () => {
   assert.equal(parsed.lane, "A");
   assert.equal(parsed.extra["factory_step"], "motion_retarget");
   assert.ok(body.includes("## factory_step: motion_retarget"));
+  assert.ok(body.includes("## known-good: tools/foo.ts:12"));
+  assert.equal((body.match(/^## lane:/gm) ?? []).length, 1);
   const hyphenated = parseCard(
     "## objective: x\n## factory-step: body_param\n## done_when\n- exists:a",
   );

@@ -144,10 +144,28 @@ export function assertFields(
   return out;
 }
 
+const CANONICAL_KEYS = new Set([
+  "lane",
+  "objective",
+  "write_roots",
+  "write-roots",
+  "known_good",
+  "known-good",
+  "done_when",
+  "done-when",
+  "out_of_scope",
+  "out-of-scope",
+  "not_tested",
+  "not-tested",
+  "failed_treatments",
+  "failed-treatments",
+]);
+
 export function dumpFields(schema: FieldDef[], values: FieldMap): Record<string, string> {
   const extra: Record<string, string> = {};
   for (const def of schema) {
     if (!def.dumpInBody || def.source !== "value") continue;
+    if (CANONICAL_KEYS.has(def.key)) continue;
     const v = values[def.key];
     if (isEmpty(v)) continue;
     extra[def.key] = Array.isArray(v) ? v.join(",") : String(v);

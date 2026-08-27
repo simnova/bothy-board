@@ -188,6 +188,11 @@ export function parseCard(
   if (fields?.failedTreatments?.length) card.failedTreatments = fields.failedTreatments;
   if (fields?.extra) card.extra = { ...card.extra, ...fields.extra };
 
+  if (!card.knownGood && card.extra["known_good"]) {
+    card.knownGood = card.extra["known_good"] ?? "";
+  }
+  if (!card.lane && card.extra["lane"]) card.lane = card.extra["lane"] ?? null;
+
   if (!card.objective && text.trim() && !/^## /m.test(text)) {
     card.objective = text.trim().split(/\n/)[0] ?? "";
   }
@@ -216,6 +221,19 @@ export function serializeCard(card: Card): string {
   }
   for (const [k, v] of Object.entries(card.extra).sort(([a], [b]) => a.localeCompare(b))) {
     if (!v) continue;
+    const canon = k.replaceAll("_", "-");
+    if (
+      canon === "lane" ||
+      canon === "objective" ||
+      canon === "write-roots" ||
+      canon === "known-good" ||
+      canon === "done-when" ||
+      canon === "out-of-scope" ||
+      canon === "not-tested" ||
+      canon === "failed-treatments"
+    ) {
+      continue;
+    }
     if (v.includes("\n")) {
       lines.push(`## ${k}`);
       lines.push(v);

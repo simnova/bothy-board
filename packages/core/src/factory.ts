@@ -30,10 +30,18 @@ export function assertClaimable(row: {
   if (row.childCount && row.childCount > 0) {
     throw new BoardError("not_ready", "Parent containers are not in the dequeue.");
   }
+  if (
+    row.assigneeAgentId ||
+    row.status === "claimed" ||
+    row.status === "in_progress" ||
+    row.status === "review" ||
+    row.status === "integrating"
+  ) {
+    throw new BoardError("already_claimed", "Task already claimed.");
+  }
   if (row.status !== "ready" || row.factory !== "Planted") {
     throw new BoardError("not_ready", "Claim requires factory=Planted and status=ready.");
   }
-  if (row.assigneeAgentId) throw new BoardError("already_claimed", "Task already claimed.");
 }
 
 export function assertWorkerPatch(patch: {

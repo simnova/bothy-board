@@ -47,6 +47,16 @@ test("G2 claimable predicate", () => {
     assert.equal((err as BoardError).code, "already_claimed");
   }
   assertClaimable({ status: "ready", factory: "Planted", assigneeAgentId: null, childCount: 0 });
+  try {
+    assertClaimable({
+      status: "claimed",
+      factory: "Planted",
+      assigneeAgentId: "agt_2",
+    });
+    assert.fail("expected already_claimed");
+  } catch (err) {
+    assert.equal((err as BoardError).code, "already_claimed");
+  }
 });
 
 test("workers cannot rewrite the contract after Planted", () => {
