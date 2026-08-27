@@ -151,6 +151,27 @@ const grokAuthorizationUrl = `${issuerBase}/api/auth/oauth2/authorize`;
 const grokTokenUrl = `${issuerBase}/api/auth/oauth2/token`;
 const grokUserInfoUrl = `${issuerBase}/api/auth/oauth2/userinfo`;
 
+/** X userinfo often has no email; Better Auth still requires one to create the user. */
+function mapXProfileToUser(profile: Record<string, unknown>) {
+  const id = String(profile["id"] ?? profile["sub"] ?? "");
+  const handle = String(
+    profile["preferred_username"] ??
+      profile["username"] ??
+      profile["nickname"] ??
+      profile["name"] ??
+      id,
+  );
+  const local = handle.replace(/[^a-zA-Z0-9._-]/g, "").slice(0, 64) || "x";
+  const rawEmail = profile["email"];
+  const email =
+    typeof rawEmail === "string" && rawEmail.includes("@")
+      ? rawEmail
+      : `${local}@users.noreply.x.com`;
+  const rawName = profile["name"];
+  const name = typeof rawName === "string" && rawName.trim() ? rawName : handle || "X user";
+  return { id, name, email, emailVerified: false as const };
+}
+
 // Real Postgres when `DATABASE_URL` is set (deployed apps), else the app's
 // embedded PGLite (preview) via a Kysely dialect — so Better Auth persists to the
 // SAME DB as app data, including email/password users. Both use the Better Auth
@@ -181,6 +202,9 @@ const grokOAuthPlugin = authConfigured
         // X omits it — re-prompting would re-show X's users.read/tweet.read
         // consent on every sign-in, which this app does not need.
         authorizationUrlParams: prompt ? { idp, prompt } : { idp },
+        // Better Auth refuses OAuth without an email. X often has none; mint a
+        // stable noreply address from the handle so sign-in can complete.
+        ...(idp === "twitter" ? { mapProfileToUser: mapXProfileToUser } : {}),
       })),
     })
   : null;

@@ -25,7 +25,8 @@ export type GrokProvider = {
   label: string;
   /**
    * OIDC scopes asked of the Grok broker (not X/Google's native list).
-   * X is identity-only — no email. Google still needs email for a real address.
+   * `email` is required by Better Auth; for X the broker returns a synthetic
+   * address — it does not add X `users.email` API permission.
    */
   scopes: readonly string[];
   /**
@@ -47,9 +48,8 @@ export const GROK_PROVIDERS: readonly GrokProvider[] = [
     providerId: "grok-x",
     idp: "twitter",
     label: "X",
-    // Identity only. The broker still asks X for users.read + tweet.read
-    // (X requires tweet.read to resolve /2/users/me) — we do not add email
-    // or any write/follow/DM scopes on our side.
-    scopes: ["openid", "profile"],
+    // Broker OIDC email only (synthetic). X still sees users.read + tweet.read
+    // + offline.access from the broker — we add no write/follow/DM scopes.
+    scopes: ["openid", "profile", "email"],
   },
 ];
