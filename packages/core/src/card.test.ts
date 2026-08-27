@@ -178,6 +178,8 @@ test("G3 G7 dequeue: parent skipped, Idle skipped, priority then id", () => {
         integrationStatus: "none",
         blockedReason: null,
         fields: {},
+        knownGood: "",
+        failedTreatments: [],
         updatedAt: "",
       }) as CompactTask,
   );

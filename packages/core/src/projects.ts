@@ -231,3 +231,23 @@ export async function publicProjectCard(projectId: string, viewerUserId: string 
     myRole: role,
   };
 }
+
+export async function setProjectConcurrency(
+  workspaceId: string,
+  userId: string,
+  projectId: string,
+  input: { maxInFlight?: number; maxIntegrating?: number },
+) {
+  const { role } = await requireProjectRole(workspaceId, userId, projectId);
+  if (role !== "owner") throw new Error("Only a project owner can change concurrency.");
+  const { clampCap, MAX_IN_FLIGHT_PER_PROJECT, MAX_INTEGRATING_PER_PROJECT } = await import(
+    "./factory"
+  );
+  const sql = await getSql();
+  const maxInFlight = clampCap(input.maxInFlight, MAX_IN_FLIGHT_PER_PROJECT);
+  const maxIntegrating = clampCap(input.maxIntegrating, MAX_INTEGRATING_PER_PROJECT);
+  await sql`update projects set max_in_flight = ${maxInFlight}, max_integrating = ${maxIntegrating}
+    where id = ${projectId} and workspace_id = ${workspaceId}`;
+  await bumpRevision(sql, workspaceId);
+  return { maxInFlight, maxIntegrating };
+}

@@ -20,6 +20,8 @@ export const PAT_SCOPES = [
       "bothy-board.tasks.create",
       "bothy-board.tasks.update",
       "bothy-board.tasks.claim",
+      "bothy-board.tasks.release",
+      "bothy-board.tasks.treatments.fail",
       "bothy-board.tasks.decompose",
       "bothy-board.tasks.comment",
       "bothy-board.projects.create",

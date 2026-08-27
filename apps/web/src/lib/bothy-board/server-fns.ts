@@ -418,6 +418,18 @@ export const postFieldTemplate = createServerFn({ method: "POST" })
     return { team, snapshot };
   });
 
+export const postProjectConcurrency = createServerFn({ method: "POST" })
+  .middleware([authMiddleware, rateLimitMiddleware])
+  .validator((input: { projectId: string; maxInFlight: number; maxIntegrating: number }) => input)
+  .handler(async ({ context, data }) => {
+    const { setProjectConcurrency } = await import("@bothy-board/core/projects");
+    const ws = await workspaceForUser(context.userId);
+    await setProjectConcurrency(ws.id, context.userId, data.projectId, data);
+    const team = await loadTeamState(context.userId, ws.id, ws.name);
+    const snapshot = await snapshotForUser(context.userId);
+    return { team, snapshot };
+  });
+
 export const getPublicProject = createServerFn({ method: "GET" })
   .middleware([publicRateLimitMiddleware])
   .validator((projectId: string) => projectId)

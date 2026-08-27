@@ -1,3 +1,4 @@
+import type { FailedTreatment } from "./card";
 import type { FieldDef, FieldMap } from "./fields";
 
 export const TASK_KINDS = ["feature", "bug", "chore", "integration", "spike", "epic"] as const;
@@ -43,6 +44,8 @@ export type CompactTask = {
   writeRoots: string[];
   objective: string;
   doneWhen: string[];
+  knownGood: string;
+  failedTreatments: FailedTreatment[];
   priority: number;
   assigneeAgentId: string | null;
   continuationId: string | null;
@@ -68,6 +71,7 @@ export type TaskDetail = CompactTask & {
   knownGood: string;
   notTested: string;
   noGrade: boolean;
+  proofsLines: string[];
   createdAt: string;
   comments: CommentRow[];
   children: CompactTask[];
@@ -121,6 +125,8 @@ export type ProjectRow = {
   defaultBranch: string;
   visibility: "private" | "public";
   fields: FieldDef[];
+  maxInFlight: number;
+  maxIntegrating: number;
 };
 
 export type WorkspaceRow = {

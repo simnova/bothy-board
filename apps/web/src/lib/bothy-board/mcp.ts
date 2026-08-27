@@ -6,12 +6,14 @@ import {
   claimTask,
   createTask,
   decomposeTask,
+  failTreatment,
   getTaskDetail,
   heartbeat,
   loadSnapshot,
   nextReady,
   plantTask,
   registerWorktree,
+  releaseTask,
   setProofs,
   updateTask,
 } from "@bothy-board/core/queries";
@@ -58,6 +60,8 @@ Worker (inside the Grok session):
 - bothy-board.mailbox.poll { taskId, since } every few turns — this is how other agents talk to you. Grok cannot prompt a running subagent.
 - bothy-board.agents.heartbeat with grokSessionId + machineName.
 - On finish: bothy-board.tasks.update status=review. Leave the session parked for resume_from.
+- If you cannot continue: bothy-board.tasks.release. Do not rewrite done_when.
+- Append failed approaches with bothy-board.tasks.treatments.fail { name, produced }.
 
 Owner plants with bothy-board.tasks.plant after TREE done_when is valid. Create refuses title-only.
 
@@ -77,8 +81,11 @@ const TOOLS = [
   {
     name: "bothy-board.tasks.next",
     description:
-      "Next Planted+ready leaf whose deps are done, ordered by priority ASC then id. {task:null} is success (no-candidate). Refuses if the snapshot would be truncated.",
-    inputSchema: { type: "object", properties: {} },
+      "Next Planted+ready leaf. Pass machineName to prefer a reaped lease parked on this box. {task:null} is success. Refuses if the snapshot would be truncated.",
+    inputSchema: {
+      type: "object",
+      properties: { machineName: { type: "string" } },
+    },
   },
   {
     name: "bothy-board.tasks.get",
@@ -176,8 +183,7 @@ const TOOLS = [
   },
   {
     name: "bothy-board.mailbox.post",
-    description:
-      "Post a note other agents will see on mailbox.poll. Works across users and machines.",
+    description: "Post a steering note. Capped at 4000 chars. Other agents see it on mailbox.poll.",
     inputSchema: {
       type: "object",
       properties: {
@@ -206,6 +212,30 @@ const TOOLS = [
         agentId: { type: "string" },
       },
       required: ["taskId"],
+    },
+  },
+  {
+    name: "bothy-board.tasks.release",
+    description:
+      "Hand back a claimed/in_progress lease to Planted+ready without waiting for heartbeat TTL.",
+    inputSchema: {
+      type: "object",
+      properties: { taskId: { type: "string" }, agentId: { type: "string" } },
+      required: ["taskId"],
+    },
+  },
+  {
+    name: "bothy-board.tasks.treatments.fail",
+    description:
+      "Append-only memory: a treatment that did not work. Next workers read this instead of rediscovering it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string" },
+        name: { type: "string" },
+        produced: { type: "string" },
+      },
+      required: ["taskId", "name"],
     },
   },
   {
@@ -270,6 +300,7 @@ const TOOLS = [
         proofsOk: { type: "boolean" },
         headSha: { type: "string" },
         reportPath: { type: "string" },
+        proofsLines: { type: "array", items: { type: "string" } },
       },
       required: ["taskId", "proofsOk"],
     },
@@ -479,7 +510,7 @@ async function callTool(
       });
     }
     case "bothy-board.tasks.next": {
-      const next = await nextReady(workspaceId, filter);
+      const next = await nextReady(workspaceId, filter, { machineName: str(args, "machineName") });
       return toolResult({ task: next.task });
     }
     case "bothy-board.tasks.get":
@@ -561,6 +592,17 @@ async function callTool(
           grokSubagentId: str(args, "grokSubagentId"),
         }),
       );
+    case "bothy-board.tasks.release":
+      return toolResult({
+        task: await releaseTask(workspaceId, taskId ?? "", str(args, "agentId")),
+      });
+    case "bothy-board.tasks.treatments.fail":
+      return toolResult({
+        task: await failTreatment(workspaceId, taskId ?? "", {
+          name: str(args, "name") ?? "",
+          produced: str(args, "produced") ?? "",
+        }),
+      });
     case "bothy-board.tasks.update":
       return toolResult({
         task: await updateTask(workspaceId, taskId ?? "", {
@@ -589,6 +631,9 @@ async function callTool(
           proofsOk: Boolean(args["proofsOk"]),
           headSha: str(args, "headSha"),
           reportPath: str(args, "reportPath"),
+          proofsLines: Array.isArray(args["proofsLines"])
+            ? args["proofsLines"].map(String)
+            : undefined,
         }),
       });
     case "bothy-board.tasks.delete": {

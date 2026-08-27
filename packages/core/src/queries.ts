@@ -1,11 +1,16 @@
 import { getSql, type Sql } from "@bothy-board/db";
-import { assertCard, cardFromInput, serializeCard } from "./card";
+import { assertCard, cardFromInput, type FailedTreatment, serializeCard } from "./card";
 import { BoardError } from "./errors";
 import {
+  assertChangedUnderRoots,
   assertClaimable,
+  assertContractPatch,
+  assertMailboxBody,
   assertWorkerPatch,
+  clampCap,
   dequeueIds,
   MAX_IN_FLIGHT_PER_PROJECT,
+  MAX_INTEGRATING_PER_PROJECT,
   parseFactory,
   SNAPSHOT_TASK_CAP,
   type WriterKind,
@@ -48,7 +53,9 @@ type TaskRecord = {
   out_of_scope: string;
   known_good: string;
   not_tested: string;
+  failed_treatments: unknown;
   no_grade: boolean;
+  proofs_lines: unknown;
   priority: number;
   project_id: string;
   assignee_user_id: string | null;
@@ -66,6 +73,19 @@ type TaskRecord = {
   created_at: string;
   updated_at: string;
 };
+
+function asTreatments(value: unknown): FailedTreatment[] {
+  if (!Array.isArray(value)) return [];
+  const out: FailedTreatment[] = [];
+  for (const row of value) {
+    if (!row || typeof row !== "object") continue;
+    const rec = row as Record<string, unknown>;
+    const name = String(rec["name"] ?? "").trim();
+    if (!name) continue;
+    out.push({ name, produced: String(rec["produced"] ?? "") });
+  }
+  return out;
+}
 
 function asStringArray(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String);
@@ -97,6 +117,8 @@ function compact(t: TaskRecord, depIds: string[], childCount: number): CompactTa
     writeRoots: asStringArray(t.write_roots),
     objective: t.objective ?? "",
     doneWhen: asStringArray(t.done_when),
+    knownGood: t.known_good ?? "",
+    failedTreatments: asTreatments(t.failed_treatments),
     priority: t.priority,
     assigneeAgentId: t.assignee_agent_id,
     continuationId: t.continuation_id,
@@ -116,7 +138,7 @@ function compact(t: TaskRecord, depIds: string[], childCount: number): CompactTa
 }
 
 const TASK_SELECT = `id, parent_id, title, body, kind, status, factory, lane, write_roots, objective, done_when,
-  out_of_scope, known_good, not_tested, no_grade, priority, project_id,
+  out_of_scope, known_good, not_tested, failed_treatments, no_grade, proofs_lines, priority, project_id,
   assignee_user_id, assignee_agent_id, continuation_id, grok_session_id, grok_subagent_id,
   affinity_user_id, affinity_machine_name, branch, worktree_path,
   integration_status, blocked_reason, fields, created_at, updated_at`;
@@ -250,11 +272,31 @@ export async function loadSnapshot(
       select id, task_id as "taskId", agent_id as "agentId", kind, message, created_at as "createdAt"
       from events where workspace_id = ${workspaceId} order by created_at desc limit 20`,
     filter
-      ? sql<{ id: string; name: string; repo: string; defaultBranch: string; visibility: string }>`
-      select id, name, repo, default_branch as "defaultBranch", visibility
+      ? sql<{
+          id: string;
+          name: string;
+          repo: string;
+          defaultBranch: string;
+          visibility: string;
+          maxInFlight: number;
+          maxIntegrating: number;
+        }>`
+      select id, name, repo, default_branch as "defaultBranch", visibility,
+        coalesce(max_in_flight, 2) as "maxInFlight",
+        coalesce(max_integrating, 1) as "maxIntegrating"
       from projects where workspace_id = ${workspaceId} and id = any(${filter}) and deleted_at is null order by created_at asc`
-      : sql<{ id: string; name: string; repo: string; defaultBranch: string; visibility: string }>`
-      select id, name, repo, default_branch as "defaultBranch", visibility
+      : sql<{
+          id: string;
+          name: string;
+          repo: string;
+          defaultBranch: string;
+          visibility: string;
+          maxInFlight: number;
+          maxIntegrating: number;
+        }>`
+      select id, name, repo, default_branch as "defaultBranch", visibility,
+        coalesce(max_in_flight, 2) as "maxInFlight",
+        coalesce(max_integrating, 1) as "maxIntegrating"
       from projects where workspace_id = ${workspaceId} and deleted_at is null order by created_at asc`,
     listMembers(workspaceId, filter),
   ]);
@@ -272,6 +314,8 @@ export async function loadSnapshot(
     ...p,
     visibility: (p.visibility === "public" ? "public" : "private") as "public" | "private",
     fields: schemaByProject.get(p.id) ?? [],
+    maxInFlight: clampCap(p.maxInFlight, MAX_IN_FLIGHT_PER_PROJECT),
+    maxIntegrating: clampCap(p.maxIntegrating, MAX_INTEGRATING_PER_PROJECT),
   }));
   const project = mapped[0] ?? {
     id: "",
@@ -280,6 +324,8 @@ export async function loadSnapshot(
     defaultBranch: "main",
     visibility: "private" as const,
     fields: [],
+    maxInFlight: MAX_IN_FLIGHT_PER_PROJECT,
+    maxIntegrating: MAX_INTEGRATING_PER_PROJECT,
   };
   const projectKey = filter ? [...filter].sort().join(",") : "";
   const token = cacheTokenFor(workspaceId, effectiveRevision, projectKey);
@@ -354,6 +400,7 @@ export async function getTaskDetail(
     knownGood: t.known_good ?? "",
     notTested: t.not_tested ?? "",
     noGrade: Boolean(t.no_grade),
+    proofsLines: asStringArray(t.proofs_lines),
     createdAt: t.created_at,
     comments,
     children: childRows.map((c) => compact(c, childDeps.get(c.id) ?? [], counts.get(c.id) ?? 0)),
@@ -564,16 +611,12 @@ export async function setProofs(
     proofsOk: boolean;
     headSha?: string | undefined;
     reportPath?: string | undefined;
+    proofsLines?: string[] | undefined;
   },
 ) {
   const sql = await getSql();
-  const rows = await sql.query<{
-    factory: string;
-    status: string;
-    title: string;
-    no_grade: boolean;
-  }>(
-    `select factory, status, title, no_grade from tasks where workspace_id = $1 and id = $2 and deleted_at is null`,
+  const rows = await sql.query<TaskRecord>(
+    `select ${TASK_SELECT} from tasks where workspace_id = $1 and id = $2 and deleted_at is null`,
     [workspaceId, input.taskId],
   );
   const t = rows[0];
@@ -589,11 +632,38 @@ export async function setProofs(
   if (t.status !== "review" && t.status !== "integrating") {
     throw new BoardError("forbidden", "proofs.set requires status=review.");
   }
+  const doneWhen = asStringArray(t.done_when);
+  const writeRoots = asStringArray(t.write_roots);
+  assertChangedUnderRoots(doneWhen, writeRoots);
+  const treeLines = doneWhen.filter((line) =>
+    /^(exists:|min-bytes:|run:|changed:|measured-before:|live:)/.test(
+      line.replace(/^\s*-\s+/, "").trim(),
+    ),
+  );
+  const proofsLines = (input.proofsLines?.length ? input.proofsLines : treeLines).map((s) =>
+    s.replace(/^\s*-\s+/, "").trim(),
+  );
+  const caps = await sql<{ max_integrating: number }>`
+    select coalesce(max_integrating, 1)::int as max_integrating from projects where id = ${t.project_id}`;
+  const cap = clampCap(caps[0]?.max_integrating, MAX_INTEGRATING_PER_PROJECT);
+  const integrating = await sql<{ n: number }>`
+    select count(*)::int as n from tasks
+    where project_id = ${t.project_id} and deleted_at is null
+      and status = ${"integrating"} and id <> ${t.id}`;
+  if ((integrating[0]?.n ?? 0) >= cap) {
+    throw new BoardError("lane_busy", "Serial integrate: another card is already integrating.");
+  }
   await sql.query(
     `update tasks set factory = 'Landed', status = 'integrating', proofs_ok = true,
-      proofs_head_sha = $3, proofs_report_path = $4, updated_at = now()
+      proofs_head_sha = $3, proofs_report_path = $4, proofs_lines = $5::jsonb, updated_at = now()
      where workspace_id = $1 and id = $2`,
-    [workspaceId, input.taskId, input.headSha ?? null, input.reportPath ?? null],
+    [
+      workspaceId,
+      input.taskId,
+      input.headSha ?? null,
+      input.reportPath ?? null,
+      jsonb(proofsLines),
+    ],
   );
   await recordEvent(sql, workspaceId, "landed", `${t.title} Landed`, input.taskId);
   await bumpRevision(sql, workspaceId);
@@ -622,6 +692,12 @@ export async function updateTask(
     assigneeAgentId?: string | null | undefined;
     writer?: WriterKind | undefined;
     fields?: FieldMap | undefined;
+    objective?: string | undefined;
+    doneWhen?: string[] | undefined;
+    writeRoots?: string[] | undefined;
+    knownGood?: string | undefined;
+    outOfScope?: string | undefined;
+    notTested?: string | undefined;
   },
 ) {
   const sql = await getSql();
@@ -633,6 +709,16 @@ export async function updateTask(
   if (!t) return null;
   const writer = patch.writer ?? "owner";
   if (writer === "agent") assertWorkerPatch({ status: patch.status, factory: patch.factory });
+  assertContractPatch(writer, parseFactory(t.factory), {
+    title: patch.title,
+    body: patch.body,
+    objective: patch.objective,
+    doneWhen: patch.doneWhen,
+    writeRoots: patch.writeRoots,
+    knownGood: patch.knownGood,
+    outOfScope: patch.outOfScope,
+    notTested: patch.notTested,
+  });
   if (writer !== "orchestrator" && writer !== "owner" && patch.factory === "Landed") {
     throw new BoardError("forbidden", "Only proofs.set lands a task.");
   }
@@ -749,19 +835,17 @@ async function assertLaneFree(sql: Sql, workspaceId: string, task: TaskRecord) {
        and factory in ('Planted','Dispatched')`,
     [workspaceId, task.project_id, task.id],
   );
+  const capRow = await sql<{ max_in_flight: number }>`
+    select coalesce(max_in_flight, 2)::int as max_in_flight from projects where id = ${task.project_id}`;
+  const cap = clampCap(capRow[0]?.max_in_flight, MAX_IN_FLIGHT_PER_PROJECT);
   const mine = asStringArray(task.write_roots);
   const overlapping = inflight.filter((row) =>
     writeRootsOverlap(mine, asStringArray(row.write_roots)),
   );
-  if (overlapping.length >= 1 && mine.length === 0) {
-    if (inflight.length >= MAX_IN_FLIGHT_PER_PROJECT) {
-      throw new BoardError("lane_busy", "N=2 in-flight cap for this project.");
-    }
+  if (inflight.length >= cap) {
+    throw new BoardError("lane_busy", `In-flight cap (${cap}) for this project.`);
   }
-  if (inflight.length >= MAX_IN_FLIGHT_PER_PROJECT) {
-    throw new BoardError("lane_busy", "N=2 in-flight cap for this project.");
-  }
-  if (overlapping.length && inflight.length >= 1 && mine.length) {
+  if (overlapping.length && mine.length) {
     throw new BoardError("lane_busy", "write_roots overlap an in-flight task.");
   }
 }
@@ -873,8 +957,9 @@ export async function decomposeTask(
     await sql.query(
       `insert into tasks (
          id, workspace_id, project_id, parent_id, title, body, kind, status, factory, priority,
-         lane, write_roots, objective, done_when, out_of_scope, known_good, not_tested
-       ) values ($1,$2,$3,$4,$5,$6,$7,'backlog','Idle',1,$8,$9::jsonb,$10,$11::jsonb,$12,$13,$14)`,
+         lane, write_roots, objective, done_when, out_of_scope, known_good, not_tested, fields,
+         failed_treatments
+       ) values ($1,$2,$3,$4,$5,$6,$7,'backlog','Idle',1,$8,$9::jsonb,$10,$11::jsonb,$12,$13,$14,$15::jsonb,$16::jsonb)`,
       [
         id,
         workspaceId,
@@ -890,6 +975,8 @@ export async function decomposeTask(
         card.outOfScope || p.out_of_scope,
         card.knownGood || p.known_good,
         card.notTested || p.not_tested,
+        JSON.stringify(parseFieldMap(p.fields)),
+        jsonb(asTreatments(p.failed_treatments)),
       ],
     );
     for (const dep of child.depIds ?? []) {
@@ -927,6 +1014,7 @@ export async function addComment(
   },
 ) {
   const sql = await getSql();
+  assertMailboxBody(input.body);
   const id = makeId("cmt");
   await sql`insert into comments (id, workspace_id, task_id, author_kind, author_user_id, author_agent_id, author_name, body, grok_session_id)
     values (${id}, ${workspaceId}, ${taskId}, ${input.authorKind}, ${input.authorUserId ?? null},
@@ -1062,7 +1150,11 @@ export async function registerWorktree(
   return id;
 }
 
-export async function nextReady(workspaceId: string, projectIds?: string[] | null) {
+export async function nextReady(
+  workspaceId: string,
+  projectIds?: string[] | null,
+  opts?: { machineName?: string | null | undefined },
+) {
   await reapStaleAgents(workspaceId);
   const sql = await getSql();
   const ws = await sql<{ name: string; revision: number }>`
@@ -1083,9 +1175,73 @@ export async function nextReady(workspaceId: string, projectIds?: string[] | nul
       "Snapshot truncated — refuse next rather than rank a prefix.",
     );
   }
-  const id = snap.readyIds[0];
+  const id = dequeueIds(snap.tasks, { machineName: opts?.machineName ?? null })[0];
   const task = id ? (snap.tasks.find((t) => t.id === id) ?? null) : null;
   return { task, incomplete: false };
+}
+
+export async function releaseTask(workspaceId: string, taskId: string, agentId?: string | null) {
+  const sql = await getSql();
+  const t = await sql.query<TaskRecord>(
+    `select ${TASK_SELECT} from tasks where workspace_id = $1 and id = $2 and deleted_at is null`,
+    [workspaceId, taskId],
+  );
+  if (!t[0]) throw new BoardError("not_found", "Task not found.");
+  if (agentId && t[0].assignee_agent_id && t[0].assignee_agent_id !== agentId) {
+    throw new BoardError("forbidden", "Only the claimant or an owner can release this lease.");
+  }
+  const won = await sql.query<{ id: string }>(
+    `update tasks set status = 'ready', factory = 'Planted', assignee_agent_id = null, updated_at = now()
+     where workspace_id = $1 and id = $2
+       and status in ('claimed','in_progress')
+       and factory in ('Planted','Dispatched')
+       and deleted_at is null
+     returning id`,
+    [workspaceId, taskId],
+  );
+  if (!won[0]) throw new BoardError("not_ready", "Task is not on an active lease.");
+  await recordEvent(sql, workspaceId, "release", "Claim released", taskId, agentId ?? undefined);
+  await bumpRevision(sql, workspaceId);
+  return getTaskDetail(workspaceId, taskId);
+}
+
+export async function failTreatment(
+  workspaceId: string,
+  taskId: string,
+  input: { name: string; produced: string },
+) {
+  const name = input.name.trim();
+  const produced = input.produced.trim();
+  if (!name) throw new BoardError("invalid_card", "Treatment name required.");
+  const sql = await getSql();
+  const rows = await sql.query<TaskRecord>(
+    `select ${TASK_SELECT} from tasks where workspace_id = $1 and id = $2 and deleted_at is null`,
+    [workspaceId, taskId],
+  );
+  const t = rows[0];
+  if (!t) throw new BoardError("not_found", "Task not found.");
+  const treatments = asTreatments(t.failed_treatments);
+  treatments.push({ name, produced });
+  const card = cardFromInput({
+    title: t.title,
+    body: t.body,
+    objective: t.objective,
+    doneWhen: asStringArray(t.done_when),
+    writeRoots: asStringArray(t.write_roots),
+    lane: t.lane,
+    knownGood: t.known_good,
+    outOfScope: t.out_of_scope,
+    notTested: t.not_tested,
+  });
+  card.failedTreatments = treatments;
+  await sql.query(
+    `update tasks set failed_treatments = $3::jsonb, body = $4, updated_at = now()
+     where workspace_id = $1 and id = $2`,
+    [workspaceId, taskId, jsonb(treatments), serializeCard(card)],
+  );
+  await recordEvent(sql, workspaceId, "treatment", `${name}: ${produced}`.slice(0, 140), taskId);
+  await bumpRevision(sql, workspaceId);
+  return getTaskDetail(workspaceId, taskId);
 }
 
 export async function mintApiKey(workspaceId: string, userId: string, name: string) {

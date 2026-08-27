@@ -212,7 +212,7 @@ export function serializeCard(card: Card): string {
     lines.push("## not-tested");
     lines.push(card.notTested.trim());
   }
-  for (const [k, v] of Object.entries(card.extra)) {
+  for (const [k, v] of Object.entries(card.extra).sort(([a], [b]) => a.localeCompare(b))) {
     if (!v) continue;
     if (v.includes("\n")) {
       lines.push(`## ${k}`);

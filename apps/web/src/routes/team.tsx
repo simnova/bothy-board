@@ -20,6 +20,7 @@ import {
   postHandle,
   postInvite,
   postProfile,
+  postProjectConcurrency,
   postProjectVisibility,
   postRestoreTrash,
   postRevokeInvite,
@@ -423,6 +424,7 @@ function ProjectSettings({
                   ))}
                 </div>
                 {owner ? <FieldSchema projectId={project.id} onTeam={onTeam} /> : null}
+                {owner ? <NGate projectId={project.id} onTeam={onTeam} /> : null}
                 {owner ? (
                   <form
                     className="mt-3 flex flex-col gap-2 sm:flex-row"
@@ -789,6 +791,64 @@ function FieldSchema({
       >
         Apply factory template
       </Button>
+    </div>
+  );
+}
+
+function NGate({ projectId, onTeam }: { projectId: string; onTeam: (team: TeamState) => void }) {
+  const [inFlight, setInFlight] = useState(2);
+  const [integrating, setIntegrating] = useState(1);
+  const save = useMutation({
+    mutationFn: () =>
+      postProjectConcurrency({
+        data: { projectId, maxInFlight: inFlight, maxIntegrating: integrating },
+      }),
+    onSuccess: (res) => {
+      onTeam(res.team);
+      toast.success("Concurrency updated");
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+  return (
+    <div className="mt-3 rounded-[var(--radius-sm)] border border-border bg-bg p-3">
+      <p className="text-xs font-medium text-fg">Agent concurrency</p>
+      <p className="mt-1 text-xs leading-relaxed text-muted">
+        In-flight cap (claimed/in_progress/review) and serial integrate (one Landed merge at a
+        time). GitHub Projects has neither.
+      </p>
+      <form
+        className="mt-2 flex flex-wrap items-end gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          save.mutate();
+        }}
+      >
+        <label className="text-[11px] text-subtle">
+          in-flight
+          <input
+            type="number"
+            min={1}
+            max={32}
+            value={inFlight}
+            onChange={(e) => setInFlight(Number(e.target.value))}
+            className="mt-1 h-10 w-20 rounded-[var(--radius-md)] border border-border bg-bg px-2 font-mono text-sm"
+          />
+        </label>
+        <label className="text-[11px] text-subtle">
+          integrating
+          <input
+            type="number"
+            min={1}
+            max={32}
+            value={integrating}
+            onChange={(e) => setIntegrating(Number(e.target.value))}
+            className="mt-1 h-10 w-20 rounded-[var(--radius-md)] border border-border bg-bg px-2 font-mono text-sm"
+          />
+        </label>
+        <Button type="submit" size="sm" variant="secondary" disabled={save.isPending}>
+          Save
+        </Button>
+      </form>
     </div>
   );
 }

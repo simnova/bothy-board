@@ -7,6 +7,7 @@ import {
   claimTask,
   createTask,
   decomposeTask,
+  failTreatment,
   getTaskDetail,
   heartbeat,
   listApiKeys,
@@ -15,6 +16,7 @@ import {
   nextReady,
   plantTask,
   registerWorktree,
+  releaseTask,
   setProofs,
   updateTask,
 } from "@bothy-board/core/queries";
@@ -71,7 +73,9 @@ export async function handleRest(request: Request): Promise<Response> {
     if (method === "GET" && path === "ready") {
       const blocked = deny("board:read");
       if (blocked) return blocked;
-      const next = await nextReady(ws, filter);
+      const next = await nextReady(ws, filter, {
+        machineName: url.searchParams.get("machineName"),
+      });
       const projectKey = filter?.length ? [...filter].sort().join(",") : "";
       return withCache({ task: next.task }, ws, actor.revision, request, undefined, projectKey);
     }
@@ -158,9 +162,12 @@ export async function handleRest(request: Request): Promise<Response> {
     if (parts[0] === "tasks" && taskId && parts[2] === "proofs" && method === "POST") {
       const blocked = deny("factory:land");
       if (blocked) return blocked;
-      const body = await readJson<{ proofsOk?: boolean; headSha?: string; reportPath?: string }>(
-        request,
-      );
+      const body = await readJson<{
+        proofsOk?: boolean;
+        headSha?: string;
+        reportPath?: string;
+        proofsLines?: string[];
+      }>(request);
       return json(
         {
           task: await setProofs(ws, {
@@ -168,6 +175,28 @@ export async function handleRest(request: Request): Promise<Response> {
             proofsOk: Boolean(body.proofsOk),
             headSha: body.headSha,
             reportPath: body.reportPath,
+            proofsLines: body.proofsLines,
+          }),
+        },
+        200,
+        request,
+      );
+    }
+    if (parts[0] === "tasks" && taskId && parts[2] === "release" && method === "POST") {
+      const blocked = deny("tasks:write");
+      if (blocked) return blocked;
+      const body = await readJson<{ agentId?: string }>(request);
+      return json({ task: await releaseTask(ws, taskId, body.agentId) }, 200, request);
+    }
+    if (parts[0] === "tasks" && taskId && parts[2] === "treatments" && method === "POST") {
+      const blocked = deny("tasks:write");
+      if (blocked) return blocked;
+      const body = await readJson<{ name?: string; produced?: string }>(request);
+      return json(
+        {
+          task: await failTreatment(ws, taskId, {
+            name: body.name ?? "",
+            produced: body.produced ?? "",
           }),
         },
         200,

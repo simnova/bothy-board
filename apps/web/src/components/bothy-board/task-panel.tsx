@@ -170,7 +170,24 @@ export function TaskPanel({
             </pre>
           ) : null}
           {task ? <ProjectFields snapshot={snapshot} task={task} /> : null}
+          {task?.failedTreatments?.length ? (
+            <section>
+              <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-subtle">
+                Failed treatments
+              </h3>
+              <ul className="space-y-1 font-mono text-[11px]">
+                {task.failedTreatments.map((f) => (
+                  <li key={f.name}>
+                    {f.name}
+                    {f.produced ? <span className="text-subtle"> → {f.produced}</span> : null}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 font-mono text-[11px]">
+            <dt className="text-subtle">known-good</dt>
+            <dd className="truncate">{task?.knownGood || "—"}</dd>
             <dt className="text-subtle">continuation</dt>
             <dd className="truncate text-fg">{task?.continuationId ?? "—"}</dd>
             <dt className="text-subtle">grok session</dt>

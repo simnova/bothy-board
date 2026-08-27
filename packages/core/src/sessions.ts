@@ -1,4 +1,5 @@
 import { getSql, type Sql } from "@bothy-board/db";
+import { assertMailboxBody } from "./factory";
 import { makeId, makeUuid } from "./ids";
 import { claimTask, getTaskDetail, heartbeat } from "./queries";
 import type { CommentRow } from "./types";
@@ -308,6 +309,7 @@ export async function postMailbox(
     grokSessionId?: string | undefined;
   },
 ) {
+  assertMailboxBody(input.body);
   const sql = await getSql();
   const id = makeId("cmt");
   await sql`insert into comments (id, workspace_id, task_id, author_kind, author_user_id, author_agent_id, author_name, body, grok_session_id)
