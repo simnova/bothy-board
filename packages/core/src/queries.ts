@@ -489,7 +489,6 @@ export async function createTask(workspaceId: string, input: CreateTaskInput) {
   const { listProjectFields } = await import("./project-fields");
   const schema = await listProjectFields(projectId);
   const card = cardFromInput({ ...input, title });
-  if (!card.objective) card.objective = title;
   const mergedFields = {
     ...valuesFromBody(schema, card.extra),
     ...(input.fields ?? {}),
@@ -581,6 +580,7 @@ export async function plantTask(workspaceId: string, taskId: string) {
     gate: "plant",
   });
   assertCard(card, "plant", t.title);
+  assertChangedUnderRoots(card.doneWhen, card.writeRoots);
   card.extra = { ...card.extra, ...dumpFields(schema, fields) };
   const body = serializeCard(card);
   await sql.query(
@@ -749,7 +749,8 @@ export async function updateTask(
     body: patch.body ?? t.body,
     status: patch.status ?? t.status,
     kind: patch.kind ?? t.kind,
-    factory: patch.factory ?? parseFactory(t.factory),
+    factory:
+      patch.status === "cancelled" ? ("Idle" as const) : (patch.factory ?? parseFactory(t.factory)),
     priority: patch.priority ?? t.priority,
     continuationId: patch.continuationId === undefined ? t.continuation_id : patch.continuationId,
     grokSessionId: patch.grokSessionId === undefined ? t.grok_session_id : patch.grokSessionId,
@@ -889,7 +890,8 @@ export async function claimTask(
   });
   await sql.query(
     `update tasks set status = 'ready', factory = 'Planted', assignee_agent_id = null, updated_at = now()
-     where workspace_id = $1 and assignee_agent_id = $2 and id <> $3 and status = 'claimed' and deleted_at is null`,
+     where workspace_id = $1 and assignee_agent_id = $2 and id <> $3
+       and status in ('claimed', 'in_progress') and deleted_at is null`,
     [workspaceId, agentId, taskId],
   );
   const won = await sql.query<{ id: string }>(
@@ -951,7 +953,6 @@ export async function decomposeTask(
       writeRoots: asStringArray(p.write_roots),
       lane: p.lane,
     });
-    if (!card.objective) card.objective = child.title.trim();
     assertCard(card, "create", child.title);
     const id = makeId("tsk");
     await sql.query(

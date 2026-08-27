@@ -304,7 +304,7 @@ const TOOLS = [
   {
     name: "bothy-board.tasks.proofs.set",
     description:
-      "Orchestrator (factory:land): proofsOk+headSha → factory=Landed, status=integrating. Workers cannot Landed.",
+      "Attestation after the consumer re-ran TREE proofs (exists:/run:/changed:/…). BothyBoard does not execute those commands. proofsOk+headSha → factory=Landed, status=integrating. Requires factory:land. Workers cannot Landed.",
     inputSchema: {
       type: "object",
       properties: {
@@ -778,6 +778,8 @@ export async function handleMcp(request: Request): Promise<Response> {
   if (request.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders(request) });
   }
+  let rpcMethod = "";
+  let rpcId: Rpc["id"] = null;
   try {
     if (request.method === "GET") {
       await enforceIpLimit(request);
@@ -802,8 +804,10 @@ export async function handleMcp(request: Request): Promise<Response> {
     if (!actor) return json({ error: "Unauthorized" }, 401, request);
 
     const rpc = (await request.json().catch(() => ({}))) as Rpc;
-    const id = rpc.id ?? null;
-    const method = rpc.method ?? "";
+    rpcId = rpc.id ?? null;
+    rpcMethod = rpc.method ?? "";
+    const id = rpcId;
+    const method = rpcMethod;
     const params = rpc.params ?? {};
     const grokSessionHeader = request.headers.get("x-grok-session-id") ?? undefined;
     const toolName = method === "tools/call" ? String(params["name"] ?? "") : "";
@@ -882,7 +886,28 @@ export async function handleMcp(request: Request): Promise<Response> {
     }
     return json(fail(id, -32601, `unknown method ${method}`), 200, request);
   } catch (err) {
-    if (isRateLimited(err)) return rateLimitedResponse(err, request);
+    if (isRateLimited(err)) {
+      const retry = { "Retry-After": String(err.retryAfterSec) };
+      if (rpcMethod === "tools/call") {
+        return json(
+          ok(
+            rpcId,
+            toolResult(
+              {
+                error: "rate_limited",
+                code: "rate_limited",
+                retryAfterSec: err.retryAfterSec,
+              },
+              true,
+            ),
+          ),
+          200,
+          request,
+          retry,
+        );
+      }
+      return rateLimitedResponse(err, request);
+    }
     throw err;
   }
 }

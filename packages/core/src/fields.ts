@@ -39,9 +39,8 @@ export function slugKey(raw: string): string {
   return raw
     .trim()
     .toLowerCase()
-    .replaceAll(" ", "-")
-    .replaceAll("_", "-")
-    .replace(/[^a-z0-9-]/g, "");
+    .replaceAll(" ", "_")
+    .replace(/[^a-z0-9_-]/g, "");
 }
 
 function whenHits(when: FieldWhen | null, values: FieldMap): boolean {
@@ -151,7 +150,7 @@ export function dumpFields(schema: FieldDef[], values: FieldMap): Record<string,
     if (!def.dumpInBody || def.source !== "value") continue;
     const v = values[def.key];
     if (isEmpty(v)) continue;
-    extra[def.key.replaceAll("_", "-")] = Array.isArray(v) ? v.join(",") : String(v);
+    extra[def.key] = Array.isArray(v) ? v.join(",") : String(v);
   }
   return extra;
 }

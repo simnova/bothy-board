@@ -106,8 +106,12 @@ export function changedPaths(doneWhen: string[]): string[] {
 }
 
 export function assertChangedUnderRoots(doneWhen: string[], writeRoots: string[]): void {
-  if (!writeRoots.length) return;
-  for (const path of changedPaths(doneWhen)) {
+  const paths = changedPaths(doneWhen);
+  if (!paths.length) return;
+  if (!writeRoots.length) {
+    throw new BoardError("invalid_card", "changed: requires write_roots.");
+  }
+  for (const path of paths) {
     if (!pathUnderRoots(path, writeRoots)) {
       throw new BoardError(
         "forbidden",

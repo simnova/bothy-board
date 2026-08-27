@@ -56,7 +56,7 @@ Always pass `cacheToken` from the last `bothy-board.sync`. `{unchanged:true}` �
 4. Spawn: `grok -s <grokSessionId> -w -p "…"`. `-s` is **new**, not resume.
 5. After `spawn_subagent`, `sessions.bind` `{ grokSessionId, grokSubagentId, taskId, machineName }` (bind CAS-claims if still ready).
 6. `worktrees.register` `{ path, branch, machineName, taskId }` — exclusive; clashes fail.
-7. Worker finishes at `status=review`. Land only via `tasks.proofs.set` `{ taskId, proofsOk, headSha }`.
+7. Worker finishes at `status=review`. Land only via `tasks.proofs.set` `{ taskId, proofsOk, headSha }` — attestation after you re-ran TREE proofs. BothyBoard does not exec `run:`/`exists:`.
 8. `changed:` paths must sit under the card's `write_roots`. One `integrating` per project unless the owner raised the cap.
 
 ## Worker
@@ -90,4 +90,4 @@ Project fields (GitHub-style) are configuration, not protocol. List them, then s
 - Worker `factory=Landed` or `status=done`
 - Rewrite `done_when` after Planted
 - Resume a session on another machine
-- Dual-dequeue GitHub Projects — BothyBoard is the only `next`
+- Dual-dequeue GitHub Projects **from this MCP** — if you called `tasks.next`, do not also pick GitHub Project cards.

@@ -70,6 +70,12 @@ test("changed: must sit under write_roots", () => {
     assert.equal((err as BoardError).code, "forbidden");
   }
   assertChangedUnderRoots(["changed:packages/core/src/card.ts"], ["packages/core"]);
+  try {
+    assertChangedUnderRoots(["changed:packages/core/src/card.ts"], []);
+    assert.fail("expected invalid_card");
+  } catch (err) {
+    assert.equal((err as BoardError).code, "invalid_card");
+  }
 });
 
 test("mailbox size cap", () => {

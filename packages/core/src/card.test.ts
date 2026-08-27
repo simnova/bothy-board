@@ -109,13 +109,39 @@ test("canonical body round-trips extra headings for consumer parsers", () => {
     failedTreatments: [],
     outOfScope: "clinical scoring",
     notTested: "live device",
-    extra: { "factory-step": "motion_retarget" },
+    extra: { factory_step: "motion_retarget" },
   });
   const parsed = parseCard(body);
   assert.equal(parsed.objective, "retarget the clip");
   assert.equal(parsed.lane, "A");
-  assert.equal(parsed.extra["factory-step"], "motion_retarget");
-  assert.ok(body.includes("## factory-step: motion_retarget"));
+  assert.equal(parsed.extra["factory_step"], "motion_retarget");
+  assert.ok(body.includes("## factory_step: motion_retarget"));
+  const hyphenated = parseCard(
+    "## objective: x\n## factory-step: body_param\n## done_when\n- exists:a",
+  );
+  assert.equal(hyphenated.extra["factory_step"], "body_param");
+});
+
+test("create title-only has no objective — not a Factory-step miss", () => {
+  const card = cardFromInput({ title: "x" });
+  assert.equal(card.objective, "");
+  expectCode(() => assertCard(card, "create", "x"), "invalid_card");
+});
+
+test("changed: without write_roots refused at plant", () => {
+  expectCode(
+    () =>
+      assertCard(
+        cardFromInput({
+          title: "x",
+          objective: "touch files",
+          doneWhen: ["changed:packages/core/src/card.ts"],
+        }),
+        "plant",
+        "x",
+      ),
+    "invalid_card",
+  );
 });
 
 test("G3 G7 dequeue: parent skipped, Idle skipped, priority then id", () => {

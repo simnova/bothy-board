@@ -1,4 +1,5 @@
 import { BoardError } from "./errors.ts";
+import { assertChangedUnderRoots } from "./factory.ts";
 
 /** Merge-gate TREE prefixes. At least one required to Plant. */
 export const TREE_PREFIXES = [
@@ -111,7 +112,8 @@ export function parseCard(
     const heading = line.match(/^##\s+([a-z0-9_-]+)(?:\s*:\s*(.*))?$/i);
     if (heading) {
       flushExtra();
-      const key = heading[1]?.toLowerCase().replaceAll("_", "-") ?? "";
+      const rawKey = heading[1]?.toLowerCase() ?? "";
+      const key = rawKey.replaceAll("_", "-");
       const rest = (heading[2] ?? "").trim();
       section = "none";
       if (key === "objective") {
@@ -149,7 +151,7 @@ export function parseCard(
         continue;
       }
       section = "extra";
-      extraKey = key;
+      extraKey = rawKey.replaceAll("-", "_");
       if (rest) extraBuf.push(rest);
       continue;
     }
@@ -256,6 +258,7 @@ export function assertCard(card: Card, gate: CardGate, title?: string): void {
       "Planted requires ≥1 TREE done_when (exists:/run:/changed:/live:/…).",
     );
   }
+  assertChangedUnderRoots(card.doneWhen, card.writeRoots);
 }
 
 export function cardFromInput(input: {

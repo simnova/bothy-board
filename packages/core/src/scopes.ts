@@ -24,16 +24,18 @@ export const PAT_SCOPES = [
       "bothy-board.tasks.treatments.fail",
       "bothy-board.tasks.decompose",
       "bothy-board.tasks.comment",
-      "bothy-board.projects.create",
-      "bothy-board.projects.fields.set",
-      "bothy-board.projects.fields.applyTemplate",
     ],
   },
   {
     id: "factory:plant",
     label: "Plant cards",
-    hint: "Owner-only: Idle → Planted after TREE done_when checks out",
-    tools: ["bothy-board.tasks.plant"],
+    hint: "Owner: Idle → Planted, plus field schema. Not on default worker tokens.",
+    tools: [
+      "bothy-board.tasks.plant",
+      "bothy-board.projects.create",
+      "bothy-board.projects.fields.set",
+      "bothy-board.projects.fields.applyTemplate",
+    ],
   },
   {
     id: "factory:land",
@@ -81,7 +83,7 @@ export type PatScopeId = (typeof PAT_SCOPES)[number]["id"];
 
 export const ALL_SCOPE_IDS: PatScopeId[] = PAT_SCOPES.map((s) => s.id);
 
-/** Default mint: no delete, no plant, no land — a worker cannot Planted/Landed/wipe. */
+/** Default mint: no delete, no plant, no land, no schema edits. */
 export const DEFAULT_SCOPE_IDS: PatScopeId[] = ALL_SCOPE_IDS.filter(
   (id) => id !== "tasks:delete" && id !== "factory:plant" && id !== "factory:land",
 );

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { BoardError } from "./errors.ts";
-import { assertFields, FIELD_TEMPLATES, templateFields } from "./fields.ts";
+import { assertFields, dumpFields, FIELD_TEMPLATES, slugKey, templateFields } from "./fields.ts";
+import { DEFAULT_SCOPE_IDS, scopeForTool } from "./scopes.ts";
 
 const schema = templateFields("prj_test", "factory");
 
@@ -14,9 +15,26 @@ function expectCode(fn: () => void, code: string) {
   }
 }
 
-test("factory template is opt-in and named", () => {
+test("slugKey keeps underscores", () => {
+  assert.equal(slugKey("factory_step"), "factory_step");
+  assert.equal(slugKey("Factory Step"), "factory_step");
+  assert.equal(slugKey("garment_token"), "garment_token");
+});
+
+test("factory template keys stay underscored", () => {
   assert.equal(FIELD_TEMPLATES.factory.id, "factory");
-  assert.ok(schema.some((f) => f.key === "factory_step"));
+  assert.deepEqual(
+    schema.map((f) => f.key),
+    ["factory_step", "lane", "unblocks", "garment_token"],
+  );
+  const unblocks = schema.find((f) => f.key === "unblocks");
+  assert.equal(unblocks?.requiredWhen?.field, "factory_step");
+});
+
+test("dumpFields emits factory_step not factory-step", () => {
+  const extra = dumpFields(schema, { factory_step: "body_param", lane: "A" });
+  assert.equal(extra["factory_step"], "body_param");
+  assert.equal(extra["factory-step"], undefined);
 });
 
 test("create without factory_step refused when template applied", () => {
@@ -76,4 +94,11 @@ test("select rejects unknown option", () => {
       ),
     "invalid_card",
   );
+});
+
+test("default worker PAT cannot rewrite field schema", () => {
+  assert.equal(DEFAULT_SCOPE_IDS.includes("factory:plant"), false);
+  assert.equal(scopeForTool("bothy-board.projects.fields.set"), "factory:plant");
+  assert.equal(scopeForTool("bothy-board.projects.fields.applyTemplate"), "factory:plant");
+  assert.equal(scopeForTool("bothy-board.projects.create"), "factory:plant");
 });

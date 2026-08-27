@@ -59,9 +59,19 @@ export function withCache(
   return new Response(JSON.stringify(payload), { status: 200, headers });
 }
 
-export function json(body: unknown, status: number, request: Request): Response {
+export function json(
+  body: unknown,
+  status: number,
+  request: Request,
+  extra?: HeadersInit,
+): Response {
   const headers = corsHeaders(request);
   headers.set("Content-Type", "application/json");
+  if (extra) {
+    new Headers(extra).forEach((v, k) => {
+      headers.set(k, v);
+    });
+  }
   return new Response(JSON.stringify(body), { status, headers });
 }
 

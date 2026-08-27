@@ -54,7 +54,7 @@ function quotas(): Record<RateKind, Quota> {
   if (isHosted()) {
     return {
       read: { limit: 90, windowMs: 60_000 },
-      write: { limit: 30, windowMs: 60_000 },
+      write: { limit: 60, windowMs: 60_000 },
       expensive: { limit: 8, windowMs: 60_000 },
       auth: { limit: 12, windowMs: 60_000 },
       ui: { limit: 90, windowMs: 60_000 },

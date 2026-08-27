@@ -73,7 +73,9 @@ export async function replaceProjectFields(
       dumpInBody: draft.dumpInBody !== false,
       source: draft.source === "title_or_body" ? "title_or_body" : "value",
       pattern: draft.pattern ?? null,
-      requiredWhen: draft.requiredWhen ?? null,
+      requiredWhen: draft.requiredWhen
+        ? { ...draft.requiredWhen, field: slugKey(draft.requiredWhen.field) }
+        : null,
       options: draft.options ?? [],
       sortOrder: draft.sortOrder ?? i,
     });
