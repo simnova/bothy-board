@@ -1,0 +1,16 @@
+{
+  "extends": "@bothy-board/typescript-config/vite",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["src", "server"],
+  "exclude": ["server/middleware/grok-pwa.ts"],
+  "references": [
+    { "path": "../../packages/core" },
+    { "path": "../../packages/db" },
+    { "path": "../../packages/ui" }
+  ]
+}

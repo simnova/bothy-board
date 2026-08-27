@@ -1,0 +1,62 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.10/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "ignoreUnknown": true,
+    "includes": [
+      "**",
+      "!**/node_modules",
+      "!**/dist",
+      "!**/.output",
+      "!**/.vercel",
+      "!**/.nitro",
+      "!**/.turbo",
+      "!**/.tanstack",
+      "!**/routeTree.gen.ts",
+      "!**/package-lock.json",
+      "!**/pnpm-lock.yaml",
+      "!**/screenshots",
+      "!**/artifacts",
+      "!**/migrations",
+      "!**/*.md",
+      "!**/*.css",
+      "!**/public/__grok",
+      "!**/favicon.svg",
+      "!**/scripts/install-page.html",
+      "!**/*.d.mts"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "complexity": {
+        "useLiteralKeys": "off"
+      },
+      "nursery": {
+        "noRestrictedDependencies": "error"
+      }
+    },
+    "domains": {
+      "react": "recommended",
+      "turborepo": "recommended"
+    }
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "semicolons": "always",
+      "trailingCommas": "all"
+    }
+  }
+}

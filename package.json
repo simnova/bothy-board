@@ -1,0 +1,43 @@
+{
+  "name": "bothy-board",
+  "license": "MIT",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "packageManager": "pnpm@11.24.0",
+  "engines": {
+    "node": ">=24",
+    "pnpm": ">=11"
+  },
+  "scripts": {
+    "preinstall": "node -e \"const ua=process.env.npm_config_user_agent||'';if(!ua.includes('pnpm')){console.error('This repo requires pnpm. See packageManager in package.json.');process.exit(1)}\"",
+    "dev": "turbo run dev --filter=@bothy-board/web",
+    "dev:portless": "portless",
+    "build": "turbo run build && node scripts/sync-vercel-output.mjs",
+    "build:dev": "turbo run build:dev --filter=@bothy-board/web",
+    "preview": "turbo run preview --filter=@bothy-board/web",
+    "preview:restart": "node scripts/preview.mjs restart",
+    "preview:stop": "node scripts/preview.mjs stop",
+    "typecheck": "turbo run typecheck",
+    "check:auth": "node scripts/check-auth-invariant.mjs",
+    "test": "turbo run test && node --test 'scripts/**/*.test.mjs'",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "knip": "knip",
+    "e18e": "e18e-cli analyze --src \"apps/**/*.{ts,tsx}\" --src \"packages/**/*.{ts,tsx}\" --src \"scripts/**/*.mjs\" --log-level error",
+    "db:migrate": "turbo run db:migrate --filter=@bothy-board/web",
+    "audit": "pnpm audit --prod"
+  },
+  "dependencies": {
+    "pg": "catalog:"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.10",
+    "@e18e/cli": "^0.7.0",
+    "knip": "^6.32.2",
+    "playwright": "^1.62.0",
+    "portless": "0.15.5",
+    "turbo": "^2.10.12",
+    "typescript": "catalog:"
+  }
+}

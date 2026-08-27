@@ -1,0 +1,10 @@
+{
+  "extends": "@bothy-board/typescript-config/react-library",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo"
+  },
+  "include": ["src"],
+  "exclude": ["dist", "node_modules"]
+}

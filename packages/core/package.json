@@ -1,0 +1,122 @@
+{
+  "name": "@bothy-board/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "development": "./src/index.ts",
+      "import": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "development": "./src/types.ts",
+      "import": "./src/types.ts",
+      "default": "./dist/types.js"
+    },
+    "./scopes": {
+      "types": "./dist/scopes.d.ts",
+      "development": "./src/scopes.ts",
+      "import": "./src/scopes.ts",
+      "default": "./dist/scopes.js"
+    },
+    "./queries": {
+      "types": "./dist/queries.d.ts",
+      "development": "./src/queries.ts",
+      "import": "./src/queries.ts",
+      "default": "./dist/queries.js"
+    },
+    "./rate-limit": {
+      "types": "./dist/rate-limit.d.ts",
+      "development": "./src/rate-limit.ts",
+      "import": "./src/rate-limit.ts",
+      "default": "./dist/rate-limit.js"
+    },
+    "./sessions": {
+      "types": "./dist/sessions.d.ts",
+      "development": "./src/sessions.ts",
+      "import": "./src/sessions.ts",
+      "default": "./dist/sessions.js"
+    },
+    "./team": {
+      "types": "./dist/team.d.ts",
+      "development": "./src/team.ts",
+      "import": "./src/team.ts",
+      "default": "./dist/team.js"
+    },
+    "./trash": {
+      "types": "./dist/trash.d.ts",
+      "development": "./src/trash.ts",
+      "import": "./src/trash.ts",
+      "default": "./dist/trash.js"
+    },
+    "./projects": {
+      "types": "./dist/projects.d.ts",
+      "development": "./src/projects.ts",
+      "import": "./src/projects.ts",
+      "default": "./dist/projects.js"
+    },
+    "./pats": {
+      "types": "./dist/pats.d.ts",
+      "development": "./src/pats.ts",
+      "import": "./src/pats.ts",
+      "default": "./dist/pats.js"
+    },
+    "./workspace": {
+      "types": "./dist/workspace.d.ts",
+      "development": "./src/workspace.ts",
+      "import": "./src/workspace.ts",
+      "default": "./dist/workspace.js"
+    },
+    "./actor": {
+      "types": "./dist/actor.d.ts",
+      "development": "./src/actor.ts",
+      "import": "./src/actor.ts",
+      "default": "./dist/actor.js"
+    },
+    "./access": {
+      "types": "./dist/access.d.ts",
+      "development": "./src/access.ts",
+      "import": "./src/access.ts",
+      "default": "./dist/access.js"
+    },
+    "./http": {
+      "types": "./dist/http.d.ts",
+      "development": "./src/http.ts",
+      "import": "./src/http.ts",
+      "default": "./dist/http.js"
+    },
+    "./hash": {
+      "types": "./dist/hash.d.ts",
+      "development": "./src/hash.ts",
+      "import": "./src/hash.ts",
+      "default": "./dist/hash.js"
+    },
+    "./ids": {
+      "types": "./dist/ids.d.ts",
+      "development": "./src/ids.ts",
+      "import": "./src/ids.ts",
+      "default": "./dist/ids.js"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --build --pretty",
+    "build": "tsc --build --pretty"
+  },
+  "dependencies": {
+    "@bothy-board/db": "workspace:*"
+  },
+  "devDependencies": {
+    "@bothy-board/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignore": ["apps/web/public/**", "apps/web/server/middleware/grok-pwa.ts", "scripts/*.d.mts"],
+  "ignoreIssues": {
+    "apps/web/src/lib/auth/**": ["exports", "types"],
+    "apps/web/src/lib/preview-*.ts": ["exports", "types"],
+    "packages/db/src/migration-plan.ts": ["exports"]
+  },
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/**/*.{mjs,js}"],
+      "project": ["scripts/**/*.{mjs,js,d.mts}"]
+    },
+    "apps/web": {
+      "entry": [
+        "src/lib/auth/popup.server.ts",
+        "src/lib/app-data/index.ts",
+        "src/lib/app-data/client.server.ts",
+        "src/lib/multiplayer/index.ts",
+        "server/tasks/**/*.ts"
+      ]
+    }
+  }
+}

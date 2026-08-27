@@ -1,0 +1,53 @@
+{
+  "name": "@bothy-board/web",
+  "version": "0.0.0",
+  "private": true,
+  "sideEffects": false,
+  "type": "module",
+  "scripts": {
+    "dev": "node ../../scripts/with-app-env.mjs vite dev --host 0.0.0.0 --port 8080",
+    "dev:app": "node ../../scripts/with-app-env.mjs vite dev --host 0.0.0.0",
+    "build": "node ../../scripts/with-app-env.mjs vite build && pnpm run db:migrate",
+    "build:dev": "node ../../scripts/with-app-env.mjs vite build --mode development",
+    "db:migrate": "node ../../scripts/migrate.mjs",
+    "preview": "node ../../scripts/with-app-env.mjs vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib/auth/gate-identity.test.ts"
+  },
+  "portless": {
+    "name": "bothy-board",
+    "script": "dev:app"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.4",
+    "@bothy-board/core": "workspace:*",
+    "@bothy-board/db": "workspace:*",
+    "@bothy-board/ui": "workspace:*",
+    "@tailwindcss/vite": "^4.3.0",
+    "@tanstack/react-query": "^5.101.0",
+    "@tanstack/react-router": "^1.170.0",
+    "@tanstack/react-start": "^1.168.0",
+    "better-auth": "~1.6.30",
+    "jose": "6.2.10",
+    "kysely": "^0.28.5",
+    "lucide-react": "^0.510.0",
+    "pg": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "sonner": "^2.0.7",
+    "tailwindcss": "^4.3.0",
+    "zod": "^4.4.0"
+  },
+  "devDependencies": {
+    "@bothy-board/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "@types/pg": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "^5.2.0",
+    "nitro": "3.0.260610-beta",
+    "typescript": "catalog:",
+    "unplugin-purge-polyfills": "^0.1.0",
+    "vite": "catalog:"
+  }
+}

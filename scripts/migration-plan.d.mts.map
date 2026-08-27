@@ -1,0 +1,1 @@
+{"version":3,"file":"migration-plan.d.mts","sourceRoot":"","sources":["migration-plan.mjs"],"names":[],"mappings":"AACA;;;;;;;;;;;GAWG;AAEH;;;;GAIG;AACH,oCAHW,MAAM,GACJ,MAAM,CAIlB;AAED;;;GAGG;AACH,sCAHW,MAAM,GACJ,OAAO,CAInB;AAED;;;;;;GAMG;AACH,yCAJW,QAAQ,CAAC,MAAM,CAAC,WAChB,QAAQ,CAAC,MAAM,CAAC,GACd,KAAK,CAAC;IAAE,IAAI,EAAE,MAAM,CAAC;IAAC,IAAI,EAAE,MAAM,CAAA;CAAE,CAAC,CASjD"}

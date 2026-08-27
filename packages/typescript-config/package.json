@@ -1,0 +1,22 @@
+{
+  "name": "@bothy-board/typescript-config",
+  "version": "0.0.0",
+  "private": true,
+  "files": [
+    "base.json",
+    "library.json",
+    "react-library.json",
+    "vite.json"
+  ],
+  "exports": {
+    "./base": "./base.json",
+    "./library": "./library.json",
+    "./react-library": "./react-library.json",
+    "./vite": "./vite.json"
+  },
+  "devDependencies": {
+    "@tsconfig/recommended": "^1.0.13",
+    "@tsconfig/strictest": "^2.0.8",
+    "@tsconfig/vite-react": "^8.1.1"
+  }
+}

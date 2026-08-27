@@ -1,0 +1,58 @@
+{
+  "name": "@bothy-board/ui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "development": "./src/index.ts",
+      "import": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./button": {
+      "types": "./dist/button.d.ts",
+      "development": "./src/button.tsx",
+      "import": "./src/button.tsx",
+      "default": "./dist/button.js"
+    },
+    "./badge": {
+      "types": "./dist/badge.d.ts",
+      "development": "./src/badge.tsx",
+      "import": "./src/badge.tsx",
+      "default": "./dist/badge.js"
+    },
+    "./cn": {
+      "types": "./dist/cn.d.ts",
+      "development": "./src/cn.ts",
+      "import": "./src/cn.ts",
+      "default": "./dist/cn.js"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --build --pretty",
+    "build": "tsc --build --pretty"
+  },
+  "dependencies": {
+    "@radix-ui/react-slot": "^1.2.4",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^3.5.0"
+  },
+  "peerDependencies": {
+    "react": "catalog:"
+  },
+  "devDependencies": {
+    "@bothy-board/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "react": "catalog:",
+    "typescript": "catalog:"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "bothy-board",
+  "turbo": false,
+  "apps": {
+    "apps/web": {
+      "name": "bothy-board",
+      "script": "dev:app"
+    }
+  }
+}

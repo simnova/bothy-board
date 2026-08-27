@@ -1,0 +1,32 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Shared versions for workspace TypeScript packages (Cellix pattern).
+catalog:
+  "@types/node": ^24.0.0
+  "@types/pg": ^8.11.10
+  "@types/react": ^19.2.0
+  "@types/react-dom": ^19.2.0
+  pg: ^8.16.3
+  react: ^19.2.0
+  react-dom: ^19.2.0
+  typescript: ^5.7.0
+  vite: ^8.2.0
+
+# Supply-chain defaults (pnpm 11). Newly published versions are skipped for a
+# day; git/http/file sub-dependencies are rejected; dependency install scripts
+# do not run unless allowlisted below.
+minimumReleaseAge: 1440
+blockExoticSubdeps: true
+strictPeerDependencies: true
+strictDepBuilds: true
+engineStrict: true
+
+overrides:
+  nf3: "0.3.17"
+  jose: "6.2.10"
+
+# Empty on purpose. Add a package only after reviewing its install script.
+# Playwright browsers are preinstalled here — do not let postinstall download.
+allowBuilds: {}
