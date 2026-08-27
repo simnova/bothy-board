@@ -16,6 +16,7 @@ import {
   postCreateProject,
   postDeclineInvite,
   postDeleteProject,
+  postFieldTemplate,
   postHandle,
   postInvite,
   postProfile,
@@ -421,6 +422,7 @@ function ProjectSettings({
                     </button>
                   ))}
                 </div>
+                {owner ? <FieldSchema projectId={project.id} onTeam={onTeam} /> : null}
                 {owner ? (
                   <form
                     className="mt-3 flex flex-col gap-2 sm:flex-row"
@@ -753,5 +755,40 @@ function InviteCard({
         )}
       </div>
     </li>
+  );
+}
+
+function FieldSchema({
+  projectId,
+  onTeam,
+}: {
+  projectId: string;
+  onTeam: (team: TeamState) => void;
+}) {
+  const apply = useMutation({
+    mutationFn: () => postFieldTemplate({ data: { projectId, template: "factory" } }),
+    onSuccess: (res) => {
+      onTeam(res.team);
+      toast.success("Applied production-factory fields");
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+  return (
+    <div className="mt-3 rounded-[var(--radius-sm)] border border-border bg-bg p-3">
+      <p className="text-xs font-medium text-fg">Configurable fields</p>
+      <p className="mt-1 text-xs leading-relaxed text-muted">
+        GitHub Projects-style: text, number, date, select. Required, plant-required, and pattern
+        gates run on create and Plant. Apply a template — OpenClinXR is not hardcoded.
+      </p>
+      <Button
+        className="mt-2"
+        size="sm"
+        variant="secondary"
+        disabled={apply.isPending}
+        onClick={() => apply.mutate()}
+      >
+        Apply factory template
+      </Button>
+    </div>
   );
 }

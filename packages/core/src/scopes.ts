@@ -9,6 +9,7 @@ export const PAT_SCOPES = [
       "bothy-board.tasks.get",
       "bothy-board.team.members",
       "bothy-board.projects.list",
+      "bothy-board.projects.fields.list",
     ],
   },
   {
@@ -22,6 +23,8 @@ export const PAT_SCOPES = [
       "bothy-board.tasks.decompose",
       "bothy-board.tasks.comment",
       "bothy-board.projects.create",
+      "bothy-board.projects.fields.set",
+      "bothy-board.projects.fields.applyTemplate",
     ],
   },
   {

@@ -354,6 +354,44 @@ export async function handleRest(request: Request): Promise<Response> {
       const id = await registerWorktree(ws, body);
       return json({ id }, 201, request);
     }
+    if (parts[0] === "projects" && parts[1] && parts[2] === "fields") {
+      const projectId = parts[1];
+      if (filter && !filter.includes(projectId)) {
+        return json({ error: "This token is not scoped to that project." }, 403, request);
+      }
+      if (method === "GET") {
+        const blocked = deny("board:read");
+        if (blocked) return blocked;
+        const { listProjectFields } = await import("@bothy-board/core/project-fields");
+        return json({ fields: await listProjectFields(projectId) }, 200, request);
+      }
+      if (method === "PUT") {
+        if (!userId) return json({ error: "owner required" }, 403, request);
+        const blocked = deny("tasks:write");
+        if (blocked) return blocked;
+        const body = await readJson<{ fields: never[] }>(request);
+        const { replaceProjectFields } = await import("@bothy-board/core/project-fields");
+        return json(
+          { fields: await replaceProjectFields(ws, userId, projectId, body.fields ?? []) },
+          200,
+          request,
+        );
+      }
+      if (method === "POST" && parts[3] === "template") {
+        if (!userId) return json({ error: "owner required" }, 403, request);
+        const blocked = deny("tasks:write");
+        if (blocked) return blocked;
+        const body = await readJson<{ template?: "factory" }>(request);
+        const { applyFieldTemplate } = await import("@bothy-board/core/project-fields");
+        return json(
+          {
+            fields: await applyFieldTemplate(ws, userId, projectId, body.template ?? "factory"),
+          },
+          200,
+          request,
+        );
+      }
+    }
     if (method === "GET" && path === "keys" && actor.type === "user") {
       const keys = await listApiKeys(ws);
       return json({ keys }, 200, request);

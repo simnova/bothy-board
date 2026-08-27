@@ -123,12 +123,24 @@
       "development": "./src/errors.ts",
       "import": "./src/errors.ts",
       "default": "./dist/errors.js"
+    },
+    "./fields": {
+      "types": "./dist/fields.d.ts",
+      "development": "./src/fields.ts",
+      "import": "./src/fields.ts",
+      "default": "./dist/fields.js"
+    },
+    "./project-fields": {
+      "types": "./dist/project-fields.d.ts",
+      "development": "./src/project-fields.ts",
+      "import": "./src/project-fields.ts",
+      "default": "./dist/project-fields.js"
     }
   },
   "scripts": {
     "typecheck": "tsc --build --pretty",
     "build": "tsc --build --pretty",
-    "test": "node --experimental-strip-types --test src/card.test.ts src/factory.test.ts"
+    "test": "node --experimental-strip-types --test src/card.test.ts src/factory.test.ts src/fields.test.ts"
   },
   "dependencies": {
     "@bothy-board/db": "workspace:*"

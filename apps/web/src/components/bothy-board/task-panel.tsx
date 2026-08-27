@@ -164,7 +164,12 @@ export function TaskPanel({
           </button>
         </header>
         <div className="flex-1 space-y-5 overflow-y-auto p-4">
-          {task?.body ? <p className="text-sm leading-relaxed text-muted">{task.body}</p> : null}
+          {task?.body ? (
+            <pre className="whitespace-pre-wrap text-sm leading-relaxed text-muted">
+              {task.body}
+            </pre>
+          ) : null}
+          {task ? <ProjectFields snapshot={snapshot} task={task} /> : null}
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 font-mono text-[11px]">
             <dt className="text-subtle">continuation</dt>
             <dd className="truncate text-fg">{task?.continuationId ?? "—"}</dd>
@@ -392,5 +397,60 @@ export function TaskPanel({
         </div>
       </aside>
     </div>
+  );
+}
+
+function ProjectFields({ snapshot, task }: { snapshot: Snapshot; task: CompactTask }) {
+  const qc = useQueryClient();
+  const schema =
+    snapshot.projects.find((p) => p.id === task.projectId)?.fields ?? snapshot.project.fields ?? [];
+  const visible = schema.filter((f) => f.source === "value");
+  const save = useMutation({
+    mutationFn: (fields: Record<string, string>) =>
+      patchTask({ data: { taskId: task.id, fields } }),
+    onSuccess: (next) => qc.setQueryData(["snapshot"], next),
+  });
+  if (!visible.length) return null;
+  return (
+    <section>
+      <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-subtle">Fields</h3>
+      <div className="space-y-2">
+        {visible.map((f) => {
+          const current = task.fields?.[f.key];
+          const value = current == null ? "" : String(current);
+          if (f.type === "select") {
+            return (
+              <label key={f.id} className="block text-[11px] text-subtle">
+                {f.name}
+                {f.required || f.plantRequired ? " *" : ""}
+                <select
+                  defaultValue={value}
+                  onChange={(e) => save.mutate({ [f.key]: e.target.value })}
+                  className="mt-1 h-10 w-full rounded-[var(--radius-md)] border border-border bg-bg px-2 text-sm"
+                >
+                  <option value="">—</option>
+                  {f.options.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            );
+          }
+          return (
+            <label key={f.id} className="block text-[11px] text-subtle">
+              {f.name}
+              {f.required || f.plantRequired ? " *" : ""}
+              <input
+                defaultValue={value}
+                onBlur={(e) => save.mutate({ [f.key]: e.target.value })}
+                className="mt-1 h-10 w-full rounded-[var(--radius-md)] border border-border bg-bg px-2 text-sm"
+              />
+            </label>
+          );
+        })}
+      </div>
+    </section>
   );
 }

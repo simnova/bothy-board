@@ -11,6 +11,7 @@ import {
   type WriterKind,
   writeRootsOverlap,
 } from "./factory";
+import { assertFields, dumpFields, type FieldMap, parseFieldMap, valuesFromBody } from "./fields";
 import { cacheTokenFor, newApiKey } from "./hash";
 import { makeId } from "./ids";
 import { listMembers } from "./team";
@@ -61,6 +62,7 @@ type TaskRecord = {
   worktree_path: string | null;
   integration_status: IntegrationStatus;
   blocked_reason: string | null;
+  fields: unknown;
   created_at: string;
   updated_at: string;
 };
@@ -108,6 +110,7 @@ function compact(t: TaskRecord, depIds: string[], childCount: number): CompactTa
     blockedReason: t.blocked_reason,
     depIds,
     childCount,
+    fields: parseFieldMap(t.fields),
     updatedAt: t.updated_at,
   };
 }
@@ -116,7 +119,7 @@ const TASK_SELECT = `id, parent_id, title, body, kind, status, factory, lane, wr
   out_of_scope, known_good, not_tested, no_grade, priority, project_id,
   assignee_user_id, assignee_agent_id, continuation_id, grok_session_id, grok_subagent_id,
   affinity_user_id, affinity_machine_name, branch, worktree_path,
-  integration_status, blocked_reason, created_at, updated_at`;
+  integration_status, blocked_reason, fields, created_at, updated_at`;
 
 async function depMap(sql: Sql, workspaceId: string): Promise<Map<string, string[]>> {
   const rows = await sql<{ task_id: string; depends_on_id: string }>`
@@ -263,9 +266,12 @@ export async function loadSnapshot(
   const scopedAgents = agents.map((a) =>
     a.currentTaskId && !visible.has(a.currentTaskId) ? { ...a, currentTaskId: null } : a,
   );
+  const { listFieldsForProjects } = await import("./project-fields");
+  const schemaByProject = await listFieldsForProjects(projects.map((p) => p.id));
   const mapped = projects.map((p) => ({
     ...p,
     visibility: (p.visibility === "public" ? "public" : "private") as "public" | "private",
+    fields: schemaByProject.get(p.id) ?? [],
   }));
   const project = mapped[0] ?? {
     id: "",
@@ -273,6 +279,7 @@ export async function loadSnapshot(
     repo: "",
     defaultBranch: "main",
     visibility: "private" as const,
+    fields: [],
   };
   const projectKey = filter ? [...filter].sort().join(",") : "";
   const token = cacheTokenFor(workspaceId, effectiveRevision, projectKey);
@@ -419,6 +426,7 @@ export type CreateTaskInput = {
   outOfScope?: string | undefined;
   notTested?: string | undefined;
   extra?: Record<string, string> | undefined;
+  fields?: FieldMap | undefined;
 };
 
 export async function createTask(workspaceId: string, input: CreateTaskInput) {
@@ -431,9 +439,25 @@ export async function createTask(workspaceId: string, input: CreateTaskInput) {
     )[0]?.id;
   if (!projectId) throw new BoardError("no_project", "This board has no project.");
   const title = input.title.trim();
+  const { listProjectFields } = await import("./project-fields");
+  const schema = await listProjectFields(projectId);
   const card = cardFromInput({ ...input, title });
   if (!card.objective) card.objective = title;
+  const mergedFields = {
+    ...valuesFromBody(schema, card.extra),
+    ...(input.fields ?? {}),
+  };
+  if (typeof mergedFields["lane"] === "string") card.lane = mergedFields["lane"];
+  const roots = mergedFields["write-roots"] ?? mergedFields["write_roots"];
+  if (Array.isArray(roots)) card.writeRoots = roots.map(String);
+  else if (typeof roots === "string") card.writeRoots = roots.split(/[,\s]+/).filter(Boolean);
   assertCard(card, "create", title);
+  const fields = assertFields(schema, mergedFields, {
+    title,
+    body: `${title}\n${input.body ?? card.objective}`,
+    gate: "create",
+  });
+  card.extra = { ...card.extra, ...dumpFields(schema, fields) };
   const body = serializeCard(card);
   await assertDepsExist(sql, workspaceId, input.depIds ?? []);
   for (const dep of input.depIds ?? []) {
@@ -446,8 +470,8 @@ export async function createTask(workspaceId: string, input: CreateTaskInput) {
   await sql.query(
     `insert into tasks (
        id, workspace_id, project_id, parent_id, title, body, kind, status, factory, priority,
-       lane, write_roots, objective, done_when, out_of_scope, known_good, not_tested
-     ) values ($1,$2,$3,$4,$5,$6,$7,'backlog','Idle',$8,$9,$10::jsonb,$11,$12::jsonb,$13,$14,$15)`,
+       lane, write_roots, objective, done_when, out_of_scope, known_good, not_tested, fields
+     ) values ($1,$2,$3,$4,$5,$6,$7,'backlog','Idle',$8,$9,$10::jsonb,$11,$12::jsonb,$13,$14,$15,$16::jsonb)`,
     [
       id,
       workspaceId,
@@ -464,6 +488,7 @@ export async function createTask(workspaceId: string, input: CreateTaskInput) {
       card.outOfScope,
       card.knownGood,
       card.notTested,
+      JSON.stringify(fields),
     ],
   );
   for (const dep of input.depIds ?? []) {
@@ -497,11 +522,24 @@ export async function plantTask(workspaceId: string, taskId: string) {
     outOfScope: t.out_of_scope,
     notTested: t.not_tested,
   });
+  const { listProjectFields } = await import("./project-fields");
+  const schema = await listProjectFields(t.project_id);
+  const stored = {
+    ...valuesFromBody(schema, card.extra),
+    ...parseFieldMap(t.fields),
+  };
+  const fields = assertFields(schema, stored, {
+    title: t.title,
+    body: `${t.title}\n${t.body}`,
+    gate: "plant",
+  });
   assertCard(card, "plant", t.title);
+  card.extra = { ...card.extra, ...dumpFields(schema, fields) };
   const body = serializeCard(card);
   await sql.query(
     `update tasks set factory = 'Planted', status = 'ready', body = $3,
-      objective = $4, done_when = $5::jsonb, write_roots = $6::jsonb, lane = $7, updated_at = now()
+      objective = $4, done_when = $5::jsonb, write_roots = $6::jsonb, lane = $7,
+      fields = $8::jsonb, updated_at = now()
      where workspace_id = $1 and id = $2 and factory = 'Idle'`,
     [
       workspaceId,
@@ -510,7 +548,8 @@ export async function plantTask(workspaceId: string, taskId: string) {
       card.objective,
       jsonb(card.doneWhen),
       jsonb(card.writeRoots),
-      card.lane,
+      (typeof fields["lane"] === "string" ? fields["lane"] : card.lane) ?? null,
+      JSON.stringify(fields),
     ],
   );
   await recordEvent(sql, workspaceId, "plant", `${t.title} Planted`, taskId);
@@ -582,6 +621,7 @@ export async function updateTask(
     blockedReason?: string | null | undefined;
     assigneeAgentId?: string | null | undefined;
     writer?: WriterKind | undefined;
+    fields?: FieldMap | undefined;
   },
 ) {
   const sql = await getSql();
@@ -601,6 +641,22 @@ export async function updateTask(
   }
   if (patch.factory === "Graded" && parseFactory(t.factory) !== "Landed") {
     throw new BoardError("forbidden", "Grade requires Landed.");
+  }
+  let fields = parseFieldMap(t.fields);
+  let lane = t.lane;
+  if (patch.fields && writer !== "agent") {
+    const { listProjectFields } = await import("./project-fields");
+    const schema = await listProjectFields(t.project_id);
+    fields = assertFields(
+      schema,
+      { ...fields, ...patch.fields },
+      {
+        title: patch.title ?? t.title,
+        body: patch.body ?? t.body,
+        gate: parseFactory(t.factory) === "Idle" ? "create" : "plant",
+      },
+    );
+    if (typeof fields["lane"] === "string") lane = fields["lane"];
   }
   const next = {
     title: patch.title ?? t.title,
@@ -630,6 +686,7 @@ export async function updateTask(
       affinity_machine_name = ${next.affinityMachineName}, affinity_user_id = ${next.affinityUserId},
       branch = ${next.branch}, worktree_path = ${next.worktreePath}, integration_status = ${next.integrationStatus},
       blocked_reason = ${next.blockedReason}, assignee_agent_id = ${next.assigneeAgentId},
+      lane = ${lane}, fields = ${JSON.stringify(fields)}::jsonb,
       updated_at = now()
     where workspace_id = ${workspaceId} and id = ${taskId}`;
   if (patch.status && patch.status !== t.status) {

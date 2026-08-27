@@ -1,3 +1,5 @@
+import type { FieldDef, FieldMap } from "./fields";
+
 export const TASK_KINDS = ["feature", "bug", "chore", "integration", "spike", "epic"] as const;
 export type TaskKind = (typeof TASK_KINDS)[number];
 
@@ -54,6 +56,7 @@ export type CompactTask = {
   blockedReason: string | null;
   depIds: string[];
   childCount: number;
+  fields: FieldMap;
   updatedAt: string;
 };
 
@@ -117,6 +120,7 @@ export type ProjectRow = {
   repo: string;
   defaultBranch: string;
   visibility: "private" | "public";
+  fields: FieldDef[];
 };
 
 export type WorkspaceRow = {

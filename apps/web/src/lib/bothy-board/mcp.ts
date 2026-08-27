@@ -110,6 +110,11 @@ const TOOLS = [
           description: "Required if the token covers more than one project.",
         },
         depIds: { type: "array", items: { type: "string" } },
+        fields: {
+          type: "object",
+          additionalProperties: true,
+          description: "Project-configured field values (see projects.fields.list).",
+        },
       },
       required: ["title"],
     },
@@ -220,6 +225,7 @@ const TOOLS = [
         worktreePath: { type: "string" },
         integrationStatus: { type: "string" },
         blockedReason: { type: "string" },
+        fields: { type: "object", additionalProperties: true },
       },
       required: ["taskId"],
     },
@@ -334,6 +340,40 @@ const TOOLS = [
       type: "object",
       properties: { name: { type: "string" }, repo: { type: "string" } },
       required: ["name"],
+    },
+  },
+  {
+    name: "bothy-board.projects.fields.list",
+    description: "List configurable fields on a project (GitHub Projects-style schema).",
+    inputSchema: {
+      type: "object",
+      properties: { projectId: { type: "string" } },
+      required: ["projectId"],
+    },
+  },
+  {
+    name: "bothy-board.projects.fields.set",
+    description: "Replace the field schema for a project. Owner only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+        fields: { type: "array", items: { type: "object" } },
+      },
+      required: ["projectId", "fields"],
+    },
+  },
+  {
+    name: "bothy-board.projects.fields.applyTemplate",
+    description:
+      "Apply a named field template. Currently: factory (step/lane/unblocks + clothing body gate).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+        template: { type: "string", enum: ["factory"] },
+      },
+      required: ["projectId", "template"],
     },
   },
   {
@@ -460,6 +500,10 @@ async function callTool(
           parentId: str(args, "parentId") ?? null,
           depIds: Array.isArray(args["depIds"]) ? args["depIds"].map(String) : [],
           projectId,
+          fields:
+            args["fields"] && typeof args["fields"] === "object" && !Array.isArray(args["fields"])
+              ? (args["fields"] as Record<string, string | number | string[] | null>)
+              : undefined,
         }),
       });
     }
@@ -530,6 +574,10 @@ async function callTool(
           integrationStatus: args["integrationStatus"] as never,
           blockedReason: str(args, "blockedReason"),
           writer: writerFor(actor, name),
+          fields:
+            args["fields"] && typeof args["fields"] === "object" && !Array.isArray(args["fields"])
+              ? (args["fields"] as Record<string, string | number | string[] | null>)
+              : undefined,
         }),
       });
     case "bothy-board.tasks.plant":
@@ -631,6 +679,38 @@ async function callTool(
           repo ? { name: str(args, "name") ?? "", repo } : { name: str(args, "name") ?? "" },
         ),
       );
+    }
+    case "bothy-board.projects.fields.list": {
+      const projectId = str(args, "projectId") ?? "";
+      if (filter && !filter.includes(projectId))
+        throw new Error("This token is not scoped to that project.");
+      const { listProjectFields } = await import("@bothy-board/core/project-fields");
+      return toolResult({ fields: await listProjectFields(projectId) });
+    }
+    case "bothy-board.projects.fields.set": {
+      if (!userId) throw new Error("Only a signed-in owner can edit fields.");
+      const { replaceProjectFields } = await import("@bothy-board/core/project-fields");
+      const raw = Array.isArray(args["fields"]) ? args["fields"] : [];
+      return toolResult({
+        fields: await replaceProjectFields(
+          workspaceId,
+          userId,
+          str(args, "projectId") ?? "",
+          raw as never,
+        ),
+      });
+    }
+    case "bothy-board.projects.fields.applyTemplate": {
+      if (!userId) throw new Error("Only a signed-in owner can edit fields.");
+      const { applyFieldTemplate } = await import("@bothy-board/core/project-fields");
+      return toolResult({
+        fields: await applyFieldTemplate(
+          workspaceId,
+          userId,
+          str(args, "projectId") ?? "",
+          (str(args, "template") ?? "factory") as "factory",
+        ),
+      });
     }
     default:
       return toolResult({ error: `unknown tool ${name}` }, true);

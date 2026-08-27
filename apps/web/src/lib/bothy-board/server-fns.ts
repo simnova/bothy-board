@@ -69,6 +69,7 @@ export const patchTask = createServerFn({ method: "POST" })
       title?: string;
       body?: string;
       blockedReason?: string | null;
+      fields?: Record<string, string | number | string[] | null>;
     }) => input,
   )
   .handler(async ({ context, data }) => {
@@ -371,6 +372,47 @@ export const postCreateProject = createServerFn({ method: "POST" })
     const { createProject } = await import("@bothy-board/core/projects");
     const ws = await workspaceForUser(context.userId);
     await createProject(ws.id, context.userId, data);
+    const team = await loadTeamState(context.userId, ws.id, ws.name);
+    const snapshot = await snapshotForUser(context.userId);
+    return { team, snapshot };
+  });
+
+export const postProjectFields = createServerFn({ method: "POST" })
+  .middleware([authMiddleware, rateLimitMiddleware])
+  .validator(
+    (input: {
+      projectId: string;
+      fields: Array<{
+        key: string;
+        name: string;
+        type: "text" | "number" | "date" | "select" | "list";
+        description?: string;
+        required?: boolean;
+        plantRequired?: boolean;
+        dumpInBody?: boolean;
+        source?: "value" | "title_or_body";
+        pattern?: string | null;
+        requiredWhen?: { field: string; equals?: string; in?: string[] } | null;
+        options?: { id: string; name: string }[];
+      }>;
+    }) => input,
+  )
+  .handler(async ({ context, data }) => {
+    const { replaceProjectFields } = await import("@bothy-board/core/project-fields");
+    const ws = await workspaceForUser(context.userId);
+    await replaceProjectFields(ws.id, context.userId, data.projectId, data.fields);
+    const team = await loadTeamState(context.userId, ws.id, ws.name);
+    const snapshot = await snapshotForUser(context.userId);
+    return { team, snapshot };
+  });
+
+export const postFieldTemplate = createServerFn({ method: "POST" })
+  .middleware([authMiddleware, rateLimitMiddleware])
+  .validator((input: { projectId: string; template: "factory" }) => input)
+  .handler(async ({ context, data }) => {
+    const { applyFieldTemplate } = await import("@bothy-board/core/project-fields");
+    const ws = await workspaceForUser(context.userId);
+    await applyFieldTemplate(ws.id, context.userId, data.projectId, data.template);
     const team = await loadTeamState(context.userId, ws.id, ws.name);
     const snapshot = await snapshotForUser(context.userId);
     return { team, snapshot };

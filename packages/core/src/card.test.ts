@@ -177,6 +177,7 @@ test("G3 G7 dequeue: parent skipped, Idle skipped, priority then id", () => {
         worktreePath: null,
         integrationStatus: "none",
         blockedReason: null,
+        fields: {},
         updatedAt: "",
       }) as CompactTask,
   );
