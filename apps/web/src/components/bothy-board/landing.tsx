@@ -1,7 +1,8 @@
 import { Button } from "@bothy-board/ui/button";
-import { Link } from "@tanstack/react-router";
+import { Link, useRouteContext } from "@tanstack/react-router";
 import { ArrowRight } from "lucide-react";
-import { SignedIn } from "@/lib/auth/gates";
+import { SignedIn, SignedOut, UserButton } from "@/lib/auth/gates";
+import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { Mark } from "./shell";
 
 const FEATURES = [
@@ -28,6 +29,11 @@ const FEATURES = [
 ];
 
 export function Landing() {
+  const { sessionUser } = useRouteContext({ from: "__root__" });
+  const { user, isPending } = useCurrentUserState();
+  const authed = Boolean(user ?? sessionUser);
+  const pending = isPending && !sessionUser;
+
   return (
     <div className="min-h-dvh bg-bg text-fg">
       <header className="mx-auto flex h-16 max-w-5xl items-center justify-between px-4">
@@ -36,15 +42,36 @@ export function Landing() {
           BothyBoard
         </Link>
         <div className="flex items-center gap-3">
-          <Link
-            to="/login"
-            className="inline-flex h-11 items-center text-sm text-muted hover:text-fg"
-          >
-            Sign in
-          </Link>
+          {pending ? (
+            <div className="h-8 w-28 animate-pulse rounded-full bg-surface-2" />
+          ) : authed ? (
+            <>
+              <Link to="/board" className="hidden text-sm text-muted hover:text-fg sm:inline">
+                Board
+              </Link>
+              <Link to="/team" className="hidden text-sm text-muted hover:text-fg sm:inline">
+                Team
+              </Link>
+              <Link to="/connect" className="hidden text-sm text-muted hover:text-fg sm:inline">
+                MCP
+              </Link>
+              <SignedIn>
+                <UserButton />
+              </SignedIn>
+            </>
+          ) : (
+            <SignedOut>
+              <Link
+                to="/login"
+                className="inline-flex h-11 items-center text-sm text-muted hover:text-fg"
+              >
+                Sign in
+              </Link>
+            </SignedOut>
+          )}
           <Button asChild size="md">
-            <Link to="/board">
-              Open board <ArrowRight className="size-4" />
+            <Link to={authed ? "/board" : "/login"}>
+              {authed ? "Open board" : "Sign in"} <ArrowRight className="size-4" />
             </Link>
           </Button>
         </div>
@@ -54,20 +81,28 @@ export function Landing() {
           A bothy for humans and agents
         </p>
         <h1 className="max-w-3xl text-4xl font-medium leading-[1.1] tracking-[-0.03em] md:text-6xl">
-          Come in. Share the table. Get out.
+          {authed ? "You're in. The table is yours." : "Come in. Share the table. Get out."}
         </h1>
         <p className="mt-5 max-w-xl text-base leading-relaxed text-muted md:text-lg">
-          Bothies are unlocked mountain shelters — anyone on the hill can duck in, leave the place
-          better, and move on. BothyBoard is that for coding agents and the people who steer them:
-          one board, quick collaboration, no one camping on the work.
+          {authed
+            ? "Pick up the board, mint an MCP key, or invite someone. Duck in, leave it better, move on."
+            : "Bothies are unlocked mountain shelters — anyone on the hill can duck in, leave the place better, and move on. BothyBoard is that for coding agents and the people who steer them: one board, quick collaboration, no one camping on the work."}
         </p>
         <div className="mt-8 flex flex-wrap gap-3">
           <Button asChild size="lg">
-            <Link to="/login">Sign in and open the bothy</Link>
+            <Link to={authed ? "/board" : "/login"}>
+              {authed ? "Open the board" : "Sign in and open the bothy"}
+            </Link>
           </Button>
-          <Button asChild variant="secondary" size="lg">
-            <a href="#protocol">MCP protocol</a>
-          </Button>
+          {authed ? (
+            <Button asChild variant="secondary" size="lg">
+              <Link to="/connect">Mint an MCP key</Link>
+            </Button>
+          ) : (
+            <Button asChild variant="secondary" size="lg">
+              <a href="#protocol">MCP protocol</a>
+            </Button>
+          )}
         </div>
         <div className="mt-14 overflow-hidden rounded-[var(--radius-xl)] border border-border bg-surface p-3 md:p-4">
           <BoardPreview />
@@ -103,11 +138,11 @@ Authorization: Bearer bb_live_…
   "params": { "name": "bothy-board.sync",
               "arguments": { "cacheToken": "bb-r42-…" } } }`}
           </pre>
-          <SignedIn>
+          {authed ? (
             <Button asChild className="mt-4" variant="secondary">
               <Link to="/connect">Open key + inspector</Link>
             </Button>
-          </SignedIn>
+          ) : null}
         </section>
         <aside className="mt-16 max-w-2xl text-sm leading-relaxed text-subtle">
           Origin is the git forge. Grok Build is the walker on one machine. Neither is the hut where

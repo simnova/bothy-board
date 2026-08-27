@@ -39,7 +39,7 @@ function Login() {
                 variant="secondary"
                 className="w-full"
                 onClick={() =>
-                  signIn(p.providerId, { callbackURL: "/", errorCallbackURL: "/login" })
+                  signIn(p.providerId, { callbackURL: "/board", errorCallbackURL: "/login" })
                 }
               >
                 Continue with {p.label}
