@@ -194,6 +194,7 @@ export async function loadSnapshot(
       cacheToken: token,
     },
     project,
+    projects: mapped,
     cacheToken: token,
     revision: effectiveRevision,
     tasks,

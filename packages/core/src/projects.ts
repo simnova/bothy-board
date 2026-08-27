@@ -108,16 +108,22 @@ export async function projectRole(projectId: string, userId: string): Promise<Pr
 export async function requireProjectRole(
   workspaceId: string,
   userId: string,
+  projectId?: string | null,
 ): Promise<{ project: ProjectInfo; role: ProjectRole }> {
-  const project = await primaryProject(workspaceId);
-  if (!project) throw new Error("This board has no project.");
+  const project = projectId ? await projectById(projectId) : await primaryProject(workspaceId);
+  if (!project || project.workspaceId !== workspaceId)
+    throw new Error("This board has no project.");
   const role = await projectRole(project.id, userId);
   if (!role) throw new Error("You are not a member of this project.");
   return { project, role };
 }
 
-export async function requireOwner(workspaceId: string, userId: string): Promise<ProjectInfo> {
-  const { project, role } = await requireProjectRole(workspaceId, userId);
+export async function requireOwner(
+  workspaceId: string,
+  userId: string,
+  projectId?: string | null,
+): Promise<ProjectInfo> {
+  const { project, role } = await requireProjectRole(workspaceId, userId, projectId);
   if (role !== "owner") throw new Error("Only a project owner can do that.");
   return project;
 }
@@ -149,19 +155,24 @@ export async function setProjectVisibility(
   workspaceId: string,
   userId: string,
   visibility: ProjectVisibility,
+  projectId?: string | null,
 ) {
   if (visibility !== "public" && visibility !== "private")
     throw new Error("Visibility must be public or private.");
-  const project = await requireOwner(workspaceId, userId);
+  const project = await requireOwner(workspaceId, userId, projectId);
   const sql = await getSql();
   await sql`update projects set visibility = ${visibility} where id = ${project.id}`;
   await bumpRevision(sql, workspaceId);
   return { ...project, visibility };
 }
 
-export async function deleteProject(workspaceId: string, userId: string) {
+export async function deleteProject(
+  workspaceId: string,
+  userId: string,
+  projectId?: string | null,
+) {
   const { softDeleteProject } = await import("./trash");
-  return softDeleteProject(workspaceId, userId);
+  return softDeleteProject(workspaceId, userId, projectId);
 }
 
 export async function createProject(
@@ -169,11 +180,6 @@ export async function createProject(
   userId: string,
   input: { name: string; repo?: string },
 ) {
-  const existing = await primaryProject(workspaceId);
-  if (existing)
-    throw new Error(
-      "This board already has a project. Move it to trash first if you want to replace it.",
-    );
   const sql = await getSql();
   const member = await sql<{ role: string }>`
     select role from workspace_members where workspace_id = ${workspaceId} and user_id = ${userId}`;
@@ -182,6 +188,11 @@ export async function createProject(
     throw new Error("Only a workspace owner can create a project on this board.");
   const name = input.name.trim();
   if (!name) throw new Error("Project name is required.");
+  const dup = await sql<{ id: string }>`
+    select id from projects
+    where workspace_id = ${workspaceId} and lower(name) = ${name.toLowerCase()} and deleted_at is null
+    limit 1`;
+  if (dup[0]) throw new Error("A project with that name already exists.");
   const id = makeId("prj");
   await sql`insert into projects (id, workspace_id, name, repo, default_branch, visibility)
     values (${id}, ${workspaceId}, ${name}, ${input.repo?.trim() ?? ""}, ${"main"}, ${"private"})`;

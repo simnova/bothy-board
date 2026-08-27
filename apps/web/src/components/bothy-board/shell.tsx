@@ -5,6 +5,7 @@ import { GitBranch, KeyRound, LayoutGrid, Users } from "lucide-react";
 import { SignedIn, SignedOut, UserButton } from "@/lib/auth/gates";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { getTeam, postSwitchWorkspace } from "@/lib/bothy-board/server-fns";
+import { PreviewDbBanner } from "./db-banner";
 
 const NAV = [
   { to: "/board", label: "Board", icon: LayoutGrid },
@@ -34,6 +35,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-dvh bg-bg text-fg">
+      <PreviewDbBanner />
       <header className="sticky top-0 z-20 border-b border-border bg-bg/90 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-[1400px] items-center gap-4 px-4">
           <Link to="/" className="flex items-center gap-2 font-medium tracking-tight">

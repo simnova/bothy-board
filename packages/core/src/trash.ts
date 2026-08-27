@@ -96,8 +96,9 @@ export async function restoreTask(
 export async function softDeleteProject(
   workspaceId: string,
   userId: string,
+  projectId?: string | null,
 ): Promise<{ deletedId: string; purgeAfter: string }> {
-  const project = await requireOwner(workspaceId, userId);
+  const project = await requireOwner(workspaceId, userId, projectId);
   const sql = await getSql();
   const ttl = ttlIso();
   await sql`update projects

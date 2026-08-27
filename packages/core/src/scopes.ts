@@ -8,6 +8,7 @@ export const PAT_SCOPES = [
       "bothy-board.tasks.next",
       "bothy-board.tasks.get",
       "bothy-board.team.members",
+      "bothy-board.projects.list",
     ],
   },
   {
@@ -20,6 +21,7 @@ export const PAT_SCOPES = [
       "bothy-board.tasks.claim",
       "bothy-board.tasks.decompose",
       "bothy-board.tasks.comment",
+      "bothy-board.projects.create",
     ],
   },
   {

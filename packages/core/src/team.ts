@@ -1,6 +1,11 @@
 import { getSql, type Sql } from "@bothy-board/db";
 import { makeId, makeUuid } from "./ids";
-import { addMemberToWorkspaceProjects, primaryProject, projectRole } from "./projects";
+import {
+  addMemberToWorkspaceProjects,
+  listUserProjects,
+  primaryProject,
+  projectRole,
+} from "./projects";
 import type { MemberRow } from "./types";
 import { bumpRevision } from "./workspace";
 
@@ -52,6 +57,13 @@ export type TeamState = {
     repo: string;
     visibility: "private" | "public";
   } | null;
+  projects: {
+    id: string;
+    name: string;
+    repo: string;
+    visibility: "private" | "public";
+    role: "owner" | "member";
+  }[];
 };
 
 export type MyProfile = {
@@ -631,7 +643,8 @@ export async function loadTeamState(
   const handle = await ensureProfile(sql, userId);
   const wsRole = (await roleIn(sql, workspaceId, userId)) ?? "member";
   const row = await loadProfileRow(sql, userId);
-  const project = await primaryProject(workspaceId);
+  const projects = await listUserProjects(workspaceId, userId);
+  const project = projects[0] ?? (await primaryProject(workspaceId));
   const pRole = project ? await projectRole(project.id, userId) : null;
   const [workspaces, members, outgoing, incoming] = await Promise.all([
     listWorkspaces(userId),
@@ -651,6 +664,13 @@ export async function loadTeamState(
     project: project
       ? { id: project.id, name: project.name, repo: project.repo, visibility: project.visibility }
       : null,
+    projects: projects.map((p) => ({
+      id: p.id,
+      name: p.name,
+      repo: p.repo,
+      visibility: p.visibility,
+      role: p.role,
+    })),
     profile: row
       ? toMyProfile(row)
       : {

@@ -284,6 +284,20 @@ const TOOLS = [
     inputSchema: { type: "object", properties: {} },
   },
   {
+    name: "bothy-board.projects.list",
+    description: "List projects this credential can see.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "bothy-board.projects.create",
+    description: "Create a project on this workspace. Owner only.",
+    inputSchema: {
+      type: "object",
+      properties: { name: { type: "string" }, repo: { type: "string" } },
+      required: ["name"],
+    },
+  },
+  {
     name: "bothy-board.tasks.delete",
     description:
       "Soft-delete a task (hidden, recoverable for 7 days). Requires tasks:delete. Cannot wipe the board — tight per-agent quota.",
@@ -364,6 +378,7 @@ async function callTool(
         cacheToken: snap.cacheToken,
         revision: snap.revision,
         project: snap.project,
+        projects: snap.projects,
         tasks: snap.tasks,
         agents: snap.agents,
         worktrees: snap.worktrees,
@@ -521,6 +536,28 @@ async function callTool(
       });
     case "bothy-board.team.members":
       return toolResult({ members: await listMembers(workspaceId) });
+    case "bothy-board.projects.list": {
+      const { listUserProjects } = await import("@bothy-board/core/projects");
+      const projects = userId
+        ? await listUserProjects(workspaceId, userId)
+        : (await loadSnapshot(workspaceId, workspaceName, revision, filter)).projects.map((p) => ({
+            ...p,
+            role: "member" as const,
+          }));
+      return toolResult({ projects });
+    }
+    case "bothy-board.projects.create": {
+      if (!userId) throw new Error("Only a signed-in owner can create a project.");
+      const { createProject } = await import("@bothy-board/core/projects");
+      const repo = str(args, "repo");
+      return toolResult(
+        await createProject(
+          workspaceId,
+          userId,
+          repo ? { name: str(args, "name") ?? "", repo } : { name: str(args, "name") ?? "" },
+        ),
+      );
+    }
     default:
       return toolResult({ error: `unknown tool ${name}` }, true);
   }

@@ -407,3 +407,80 @@ export async function seedNorthline(sql: Sql, workspaceId: string, ownerUserId: 
   await sql`insert into api_keys (id, workspace_id, name, key_hash, key_prefix, created_by_user_id)
     values (${makeId("key")}, ${workspaceId}, ${"Workspace MCP key"}, ${hashApiKey(key)}, ${key.slice(0, 18)}, ${ownerUserId})`;
 }
+
+/** Real BothyBoard product board — created next to the Harbor demo, never twice. */
+export async function ensureBothyBoardProject(
+  sql: Sql,
+  workspaceId: string,
+  ownerUserId: string,
+): Promise<string> {
+  const existing = await sql<{ id: string }>`
+    select id from projects
+    where workspace_id = ${workspaceId} and name = ${"BothyBoard"} and deleted_at is null
+    limit 1`;
+  if (existing[0]) return existing[0].id;
+
+  const projectId = makeId("prj");
+  await sql`insert into projects (id, workspace_id, name, repo, default_branch, visibility)
+    values (${projectId}, ${workspaceId}, ${"BothyBoard"}, ${"simnova/bothy-board"}, ${"main"}, ${"private"})`;
+  await sql`insert into project_members (project_id, user_id, role)
+    values (${projectId}, ${ownerUserId}, ${"owner"})`;
+  const others = await sql<{ user_id: string }>`
+    select user_id from workspace_members
+    where workspace_id = ${workspaceId} and user_id <> ${ownerUserId}`;
+  for (const o of others) {
+    await sql`insert into project_members (project_id, user_id, role)
+      values (${projectId}, ${o.user_id}, ${"member"})
+      on conflict (project_id, user_id) do nothing`;
+  }
+
+  const tEpic = makeId("tsk");
+  const tMcp = makeId("tsk");
+  const tDb = makeId("tsk");
+  const tKeys = makeId("tsk");
+  const tasks: SeedTask[] = [
+    {
+      id: tEpic,
+      title: "BothyBoard — humans and agents in the same hut",
+      body: "Product board for this app. Harbor is the demo logbook; this project is the real work.",
+      kind: "feature",
+      status: "in_progress",
+      priority: 0,
+    },
+    {
+      id: tMcp,
+      parentId: tEpic,
+      title: "Dogfood MCP from Grok Build",
+      body: "Connect with a BothyBoard-scoped PAT. Sync, claim, heartbeat. Do not use the Harbor demo token for this project.",
+      kind: "chore",
+      status: "ready",
+      priority: 0,
+    },
+    {
+      id: tDb,
+      parentId: tEpic,
+      title: "Show when the board is on PGLite, not Postgres",
+      body: "Banner in the shell and landing whenever DATABASE_URL is missing. Publish uses Neon; preview data dies on restart.",
+      kind: "feature",
+      status: "ready",
+      priority: 0,
+    },
+    {
+      id: tKeys,
+      parentId: tEpic,
+      title: "Mint Connect keys scoped to BothyBoard",
+      body: "Harbor-only PATs cannot see this project. After the project exists, mint a new key that includes BothyBoard.",
+      kind: "chore",
+      status: "ready",
+      priority: 1,
+    },
+  ];
+  for (const t of tasks) {
+    await sql`insert into tasks (id, workspace_id, project_id, parent_id, title, body, kind, status, priority)
+      values (${t.id}, ${workspaceId}, ${projectId}, ${t.parentId ?? null}, ${t.title}, ${t.body}, ${t.kind}, ${t.status}, ${t.priority})`;
+  }
+  await sql`insert into events (id, workspace_id, task_id, kind, message)
+    values (${makeId("evt")}, ${workspaceId}, ${tEpic}, ${"create"}, ${"Opened the BothyBoard project"})`;
+  await sql`update workspaces set revision = revision + 1, updated_at = now() where id = ${workspaceId}`;
+  return projectId;
+}

@@ -43,7 +43,13 @@ export const getTask = createServerFn({ method: "GET" })
 export const postTask = createServerFn({ method: "POST" })
   .middleware([authMiddleware, rateLimitMiddleware])
   .validator(
-    (input: { title: string; body?: string; kind?: TaskKind; parentId?: string | null }) => input,
+    (input: {
+      title: string;
+      body?: string;
+      kind?: TaskKind;
+      parentId?: string | null;
+      projectId?: string;
+    }) => input,
   )
   .handler(async ({ context, data }) => {
     const ws = await workspaceForUser(context.userId);
@@ -277,22 +283,23 @@ export const postRevokeToken = createServerFn({ method: "POST" })
 
 export const postProjectVisibility = createServerFn({ method: "POST" })
   .middleware([authMiddleware, rateLimitMiddleware])
-  .validator((input: { visibility: "public" | "private" }) => input)
+  .validator((input: { visibility: "public" | "private"; projectId?: string }) => input)
   .handler(async ({ context, data }) => {
     const { setProjectVisibility } = await import("@bothy-board/core/projects");
     const ws = await workspaceForUser(context.userId);
-    await setProjectVisibility(ws.id, context.userId, data.visibility);
+    await setProjectVisibility(ws.id, context.userId, data.visibility, data.projectId);
     return loadTeamState(context.userId, ws.id, ws.name);
   });
 
 export const postDeleteProject = createServerFn({ method: "POST" })
   .middleware([authMiddleware, rateLimitMiddleware])
-  .handler(async ({ context }) => {
+  .validator((input: { projectId?: string } = {}) => input)
+  .handler(async ({ context, data }) => {
     const { enforceActorUserLimit } = await import("@bothy-board/core/rate-limit");
     await enforceActorUserLimit(context.userId, "destructive");
     const { deleteProject } = await import("@bothy-board/core/projects");
     const ws = await workspaceForUser(context.userId);
-    await deleteProject(ws.id, context.userId);
+    await deleteProject(ws.id, context.userId, data.projectId);
     const team = await loadTeamState(context.userId, ws.id, ws.name);
     const snapshot = await snapshotForUser(context.userId);
     return { team, snapshot };

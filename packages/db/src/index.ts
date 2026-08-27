@@ -4,18 +4,21 @@ import { pendingMigrations } from "./migration-plan";
 /** Which database backend is active. */
 export type DbSource = "neon" | "pglite";
 
-// An empty/whitespace DATABASE_URL (an easy misconfig in deploy UIs) must mean
-// "unset" — otherwise production would silently run on the PGLite fallback.
-const rawDatabaseUrl = typeof process !== "undefined" ? process.env["DATABASE_URL"] : undefined;
-const databaseUrl = rawDatabaseUrl?.trim() ? rawDatabaseUrl : undefined;
-
 /**
  * Active backend: real **Neon** when `DATABASE_URL` is set (deployed / configured
  * sandbox), otherwise a local embedded **PGLite** (Postgres compiled to WASM) so
  * the app has a working database even with nothing configured — the live preview
  * included. Swap in Neon later by just setting `DATABASE_URL`; no code changes.
+ *
+ * Re-reads env each call: Grok publish injects DATABASE_URL after module load.
  */
-export const dbSource: DbSource = databaseUrl ? "neon" : "pglite";
+export function currentDbSource(): DbSource {
+  const raw = typeof process !== "undefined" ? process.env["DATABASE_URL"] : undefined;
+  return raw?.trim() ? "neon" : "pglite";
+}
+
+/** Snapshot at first import — prefer `currentDbSource()` at request time. */
+export const dbSource: DbSource = currentDbSource();
 
 /**
  * Minimal shared SQL surface, satisfied by both Neon and PGLite. Both the

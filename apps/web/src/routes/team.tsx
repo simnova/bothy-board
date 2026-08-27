@@ -343,17 +343,23 @@ function ProjectSettings({
 }) {
   const [confirm, setConfirm] = useState("");
   const [newName, setNewName] = useState("");
+  const [newRepo, setNewRepo] = useState("");
+  const projects = team.projects?.length
+    ? team.projects
+    : team.project
+      ? [{ ...team.project, role: team.role }]
+      : [];
   const vis = useMutation({
-    mutationFn: (visibility: "public" | "private") =>
-      postProjectVisibility({ data: { visibility } }),
+    mutationFn: (input: { visibility: "public" | "private"; projectId: string }) =>
+      postProjectVisibility({ data: input }),
     onSuccess: (next) => {
       onTeam(next);
-      toast.success(`Project is ${next.project?.visibility ?? "updated"}`);
+      toast.success("Visibility updated");
     },
     onError: (err) => toast.error((err as Error).message),
   });
   const del = useMutation({
-    mutationFn: () => postDeleteProject(),
+    mutationFn: (projectId: string) => postDeleteProject({ data: { projectId } }),
     onSuccess: (res) => {
       onDeleted(res);
       setConfirm("");
@@ -362,113 +368,113 @@ function ProjectSettings({
     onError: (err) => toast.error((err as Error).message),
   });
   const create = useMutation({
-    mutationFn: () => postCreateProject({ data: { name: newName } }),
+    mutationFn: () =>
+      postCreateProject({
+        data: newRepo.trim() ? { name: newName, repo: newRepo.trim() } : { name: newName },
+      }),
     onSuccess: (res) => {
       onDeleted(res);
       setNewName("");
+      setNewRepo("");
       toast.success("Project created — you are the owner");
     },
     onError: (err) => toast.error((err as Error).message),
   });
-  const isOwner = team.role === "owner";
-  const project = team.project;
-
-  if (!project) {
-    return (
-      <section className="rounded-[var(--radius-lg)] border border-border bg-surface p-4">
-        <h2 className="text-sm font-medium">Project</h2>
-        <p className="mt-1 text-sm text-muted">
-          This board has no project. An owner can create one.
-        </p>
-        {isOwner || !team.members.length ? (
-          <form
-            className="mt-3 flex flex-col gap-2 sm:flex-row"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (newName.trim()) create.mutate();
-            }}
-          >
-            <input
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder="Project name"
-              className="h-11 w-full rounded-[var(--radius-md)] border border-border bg-bg px-3 text-sm outline-none focus:ring-2 focus:ring-accent/30 sm:max-w-xs"
-            />
-            <Button type="submit" disabled={create.isPending || !newName.trim()}>
-              Create project
-            </Button>
-          </form>
-        ) : (
-          <p className="mt-2 text-sm text-subtle">Ask an owner to create the project.</p>
-        )}
-      </section>
-    );
-  }
+  const isWsOwner = team.role === "owner" || projects.some((p) => p.role === "owner");
 
   return (
     <section className="rounded-[var(--radius-lg)] border border-border bg-surface p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-sm font-medium">Project</h2>
-        <Badge tone={isOwner ? "accent" : "muted"}>{team.role}</Badge>
-      </div>
-      <p className="mt-1 font-mono text-sm">
-        {project.name}
-        {project.repo ? <span className="text-subtle"> · {project.repo}</span> : null}
+      <h2 className="text-sm font-medium">Projects</h2>
+      <p className="mt-1 text-sm text-muted">
+        Harbor is the demo logbook. BothyBoard is this product. Each token is scoped to the projects
+        you pick on Connect.
       </p>
-      <p className="mt-2 text-sm text-muted">
-        Visibility is owner-only. Public lists this project on profiles that publish board names.
-        The board still requires membership.
-      </p>
-      <div className="mt-3 flex flex-wrap gap-2">
-        {(["private", "public"] as const).map((v) => (
-          <button
-            key={v}
-            type="button"
-            disabled={!isOwner || vis.isPending}
-            onClick={() => isOwner && vis.mutate(v)}
-            className={
-              project.visibility === v
-                ? "h-11 rounded-[var(--radius-md)] border border-accent bg-surface-2 px-3 text-sm"
-                : "h-11 rounded-[var(--radius-md)] border border-border bg-bg px-3 text-sm text-muted disabled:opacity-50"
-            }
-          >
-            {v}
-          </button>
-        ))}
-      </div>
-      {!isOwner ? (
-        <p className="mt-2 text-xs text-subtle">
-          Only an owner can change visibility or delete this project.
-        </p>
+      {projects.length === 0 ? (
+        <p className="mt-3 text-sm text-subtle">No projects yet.</p>
       ) : (
-        <div className="mt-5 border-t border-border pt-4">
-          <h3 className="text-sm font-medium text-danger">Move project to trash</h3>
-          <p className="mt-1 text-sm text-muted">
-            Hides this project and its tasks. Restore within 7 days or it is permanently deleted.
-            Type the project name to confirm.
-          </p>
-          <form
-            className="mt-3 flex flex-col gap-2 sm:flex-row"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (confirm === project.name) del.mutate();
-            }}
-          >
-            <input
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              placeholder={project.name}
-              className="h-11 w-full rounded-[var(--radius-md)] border border-border bg-bg px-3 font-mono text-sm outline-none focus:ring-2 focus:ring-accent/30 sm:max-w-xs"
-            />
-            <Button
-              type="submit"
-              variant="secondary"
-              disabled={del.isPending || confirm !== project.name}
-            >
-              Move to trash
-            </Button>
-          </form>
-        </div>
+        <ul className="mt-4 space-y-4">
+          {projects.map((project) => {
+            const owner = project.role === "owner";
+            return (
+              <li key={project.id} className="rounded-[var(--radius-md)] border border-border p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-mono text-sm">
+                    {project.name}
+                    {project.repo ? <span className="text-subtle"> · {project.repo}</span> : null}
+                  </p>
+                  <Badge tone={owner ? "accent" : "muted"}>{project.role}</Badge>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {(["private", "public"] as const).map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      disabled={!owner || vis.isPending}
+                      onClick={() => owner && vis.mutate({ visibility: v, projectId: project.id })}
+                      className={
+                        project.visibility === v
+                          ? "h-11 rounded-[var(--radius-md)] border border-accent bg-surface-2 px-3 text-sm"
+                          : "h-11 rounded-[var(--radius-md)] border border-border bg-bg px-3 text-sm text-muted disabled:opacity-50"
+                      }
+                    >
+                      {v}
+                    </button>
+                  ))}
+                </div>
+                {owner ? (
+                  <form
+                    className="mt-3 flex flex-col gap-2 sm:flex-row"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (confirm === project.name) del.mutate(project.id);
+                    }}
+                  >
+                    <input
+                      value={confirm}
+                      onChange={(e) => setConfirm(e.target.value)}
+                      placeholder={`Type ${project.name} to trash`}
+                      className="h-11 w-full rounded-[var(--radius-md)] border border-border bg-bg px-3 font-mono text-sm outline-none focus:ring-2 focus:ring-accent/30 sm:max-w-xs"
+                    />
+                    <Button
+                      type="submit"
+                      variant="secondary"
+                      disabled={del.isPending || confirm !== project.name}
+                    >
+                      Move to trash
+                    </Button>
+                  </form>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {isWsOwner ? (
+        <form
+          className="mt-4 flex flex-col gap-2 border-t border-border pt-4 sm:flex-row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (newName.trim()) create.mutate();
+          }}
+        >
+          <input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="New project name"
+            className="h-11 w-full rounded-[var(--radius-md)] border border-border bg-bg px-3 text-sm outline-none focus:ring-2 focus:ring-accent/30 sm:max-w-xs"
+          />
+          <input
+            value={newRepo}
+            onChange={(e) => setNewRepo(e.target.value)}
+            placeholder="owner/repo (optional)"
+            className="h-11 w-full rounded-[var(--radius-md)] border border-border bg-bg px-3 font-mono text-sm outline-none focus:ring-2 focus:ring-accent/30 sm:max-w-xs"
+          />
+          <Button type="submit" disabled={create.isPending || !newName.trim()}>
+            Add project
+          </Button>
+        </form>
+      ) : (
+        <p className="mt-3 text-sm text-subtle">Ask an owner to add a project.</p>
       )}
     </section>
   );

@@ -3,6 +3,7 @@ import { Link, useRouteContext } from "@tanstack/react-router";
 import { ArrowRight } from "lucide-react";
 import { SignedIn, SignedOut, UserButton } from "@/lib/auth/gates";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
+import { PreviewDbBanner } from "./db-banner";
 import { Mark } from "./shell";
 
 const FEATURES = [
@@ -36,6 +37,7 @@ export function Landing() {
 
   return (
     <div className="min-h-dvh bg-bg text-fg">
+      <PreviewDbBanner />
       <header className="mx-auto flex h-16 max-w-5xl items-center justify-between px-4">
         <Link to="/" className="flex items-center gap-2 font-medium">
           <Mark />

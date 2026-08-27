@@ -19,8 +19,16 @@ const fetchSessionUser = createServerFn({ method: "GET" }).handler(async () => {
   }
 });
 
+const fetchDbSource = createServerFn({ method: "GET" }).handler(async () => {
+  const { currentDbSource } = await import("@bothy-board/db");
+  return currentDbSource();
+});
+
 export const Route = createRootRoute({
-  beforeLoad: async () => ({ sessionUser: await fetchSessionUser() }),
+  beforeLoad: async () => ({
+    sessionUser: await fetchSessionUser(),
+    db: await fetchDbSource(),
+  }),
   head: () => ({
     meta: [
       { charSet: "utf-8" },

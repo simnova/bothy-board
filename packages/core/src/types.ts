@@ -122,6 +122,7 @@ export type MemberRow = {
 export type Snapshot = {
   workspace: WorkspaceRow;
   project: ProjectRow;
+  projects: ProjectRow[];
   cacheToken: string;
   revision: number;
   tasks: CompactTask[];

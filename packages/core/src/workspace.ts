@@ -1,7 +1,7 @@
 import { getSql, type Sql } from "@bothy-board/db";
 import { cacheTokenFor, demoMcpKey, hashApiKey } from "./hash";
 import { makeId } from "./ids";
-import { seedNorthline } from "./seed";
+import { ensureBothyBoardProject, seedNorthline } from "./seed";
 import type { WorkspaceRow } from "./types";
 
 export async function bumpRevision(sql: Sql, workspaceId: string): Promise<number> {
@@ -14,6 +14,20 @@ export async function bumpRevision(sql: Sql, workspaceId: string): Promise<numbe
 
 export function toWorkspaceRow(id: string, name: string, revision: number): WorkspaceRow {
   return { id, name, revision, cacheToken: cacheTokenFor(id, revision) };
+}
+
+async function withBothyBoard(
+  sql: Sql,
+  workspace: { id: string; name: string; revision: number },
+  userId: string,
+): Promise<WorkspaceRow> {
+  const owner = await sql<{ owner_user_id: string }>`
+    select owner_user_id from workspaces where id = ${workspace.id}`;
+  await ensureBothyBoardProject(sql, workspace.id, owner[0]?.owner_user_id ?? userId);
+  const next = await sql<{ id: string; name: string; revision: number }>`
+    select id, name, revision from workspaces where id = ${workspace.id}`;
+  const row = next[0] ?? workspace;
+  return toWorkspaceRow(row.id, row.name, row.revision);
 }
 
 export async function workspaceForUser(userId: string): Promise<WorkspaceRow> {
@@ -30,7 +44,7 @@ export async function workspaceForUser(userId: string): Promise<WorkspaceRow> {
       join workspaces w on w.id = m.workspace_id
       where m.user_id = ${userId} and w.id = ${pref[0].active_workspace_id}
       limit 1`;
-    if (chosen[0]) return toWorkspaceRow(chosen[0].id, chosen[0].name, chosen[0].revision);
+    if (chosen[0]) return withBothyBoard(sql, chosen[0], userId);
   }
 
   const existing = await sql<{ id: string; name: string; revision: number }>`
@@ -44,7 +58,7 @@ export async function workspaceForUser(userId: string): Promise<WorkspaceRow> {
     await sql`insert into user_prefs (user_id, active_workspace_id)
       values (${userId}, ${existing[0].id})
       on conflict (user_id) do update set active_workspace_id = excluded.active_workspace_id`;
-    return toWorkspaceRow(existing[0].id, existing[0].name, existing[0].revision);
+    return withBothyBoard(sql, existing[0], userId);
   }
 
   const id = makeId("ws");
@@ -54,6 +68,7 @@ export async function workspaceForUser(userId: string): Promise<WorkspaceRow> {
     values (${userId}, ${id})
     on conflict (user_id) do update set active_workspace_id = excluded.active_workspace_id`;
   await seedNorthline(sql, id, userId);
+  await ensureBothyBoardProject(sql, id, userId);
   const key = demoMcpKey(id);
   const keys = await sql<{
     id: string;

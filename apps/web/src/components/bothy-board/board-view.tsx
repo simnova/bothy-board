@@ -20,9 +20,33 @@ export function BoardView() {
   const [selected, setSelected] = useState<string | null>(null);
   const [view, setView] = useState<"board" | "graph">("board");
   const [draft, setDraft] = useState("");
+  const [projectId, setProjectId] = useState("");
+
+  const data = snap.data;
+  const projects = data?.projects?.length ? data.projects : data?.project.id ? [data.project] : [];
+  const preferred = projects.find((p) => p.name === "BothyBoard")?.id ?? projects[0]?.id ?? "";
+  const activeProjectId = projectId || preferred;
+  const activeProject = projects.find((p) => p.id === activeProjectId) ?? data?.project;
+  const viewData = data
+    ? (() => {
+        const tasks = activeProjectId
+          ? data.tasks.filter((t) => t.projectId === activeProjectId)
+          : data.tasks;
+        return {
+          ...data,
+          project: activeProject ?? data.project,
+          tasks,
+          readyIds: data.readyIds.filter((id) => tasks.some((t) => t.id === id)),
+        };
+      })()
+    : null;
+  const selectedTask = viewData?.tasks.find((t) => t.id === selected) ?? null;
 
   const create = useMutation({
-    mutationFn: (title: string) => postTask({ data: { title } }),
+    mutationFn: (title: string) =>
+      postTask({
+        data: activeProjectId ? { title, projectId: activeProjectId } : { title },
+      }),
     onSuccess: (res) => {
       qc.setQueryData(["snapshot"], res.snapshot);
       setDraft("");
@@ -33,9 +57,6 @@ export function BoardView() {
     mutationFn: (input: { taskId: string; status: TaskStatus }) => patchTask({ data: input }),
     onSuccess: (next) => qc.setQueryData(["snapshot"], next),
   });
-
-  const data = snap.data;
-  const selectedTask = data?.tasks.find((t) => t.id === selected) ?? null;
 
   if (snap.isPending && !data) {
     return <BoardSkeleton />;
@@ -55,29 +76,46 @@ export function BoardView() {
     }
     return <p className="text-sm text-danger">{message}</p>;
   }
-  if (!data) return null;
+  if (!data || !viewData) return null;
 
   return (
     <div>
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-subtle">
-            {data.workspace.name} / {data.project.repo || data.project.name || "no project"}
+            {viewData.workspace.name} /{" "}
+            {viewData.project.repo || viewData.project.name || "no project"}
           </p>
           <h1 className="mt-1 flex flex-wrap items-center gap-2 text-2xl font-medium tracking-tight">
             Board
-            {data.project.id ? (
-              <Badge tone={data.project.visibility === "public" ? "accent" : "muted"}>
-                {data.project.visibility}
+            {viewData.project.id ? (
+              <Badge tone={viewData.project.visibility === "public" ? "accent" : "muted"}>
+                {viewData.project.visibility}
               </Badge>
             ) : null}
-            {data.myRole ? <Badge>{data.myRole}</Badge> : null}
+            {viewData.myRole ? <Badge>{viewData.myRole}</Badge> : null}
           </h1>
+          {projects.length > 1 ? (
+            <label className="mt-3 block">
+              <span className="sr-only">Project</span>
+              <select
+                value={activeProjectId}
+                onChange={(e) => setProjectId(e.target.value)}
+                className="h-11 max-w-xs rounded-[var(--radius-md)] border border-border bg-bg px-2 text-sm outline-none focus:ring-2 focus:ring-accent/30"
+              >
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Stat label="rev" value={String(data.revision)} />
-          <Stat label="cache" value={data.cacheToken} />
-          <Stat label="ready" value={String(data.readyIds.length)} />
+          <Stat label="rev" value={String(viewData.revision)} />
+          <Stat label="cache" value={viewData.cacheToken} />
+          <Stat label="ready" value={String(viewData.readyIds.length)} />
           <div className="flex rounded-[var(--radius-sm)] border border-border p-0.5">
             {(["board", "graph"] as const).map((v) => (
               <button
@@ -97,10 +135,10 @@ export function BoardView() {
       </div>
 
       {view === "graph" ? (
-        <GraphView snapshot={data} onSelect={setSelected} />
+        <GraphView snapshot={viewData} onSelect={setSelected} />
       ) : (
         <Kanban
-          data={data}
+          data={viewData}
           draft={draft}
           setDraft={setDraft}
           onCreate={() => draft.trim() && create.mutate(draft.trim())}
@@ -110,8 +148,8 @@ export function BoardView() {
         />
       )}
 
-      {selectedTask && data ? (
-        <TaskPanel snapshot={data} taskId={selectedTask.id} onClose={() => setSelected(null)} />
+      {selectedTask && viewData ? (
+        <TaskPanel snapshot={viewData} taskId={selectedTask.id} onClose={() => setSelected(null)} />
       ) : null}
     </div>
   );
