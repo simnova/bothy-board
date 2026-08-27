@@ -167,7 +167,7 @@ export const SESSION_TOKEN_COOKIE = "__Host-grok-auth.session_token";
 // breaking brackets (models often trip on the conditional plugin spread).
 const grokOAuthPlugin = authConfigured
   ? genericOAuth({
-      config: GROK_PROVIDERS.map(({ providerId, idp }) => ({
+      config: GROK_PROVIDERS.map(({ providerId, idp, scopes, prompt }) => ({
         providerId,
         clientId: grokClientId as string,
         clientSecret: grokClientSecret as string,
@@ -176,13 +176,11 @@ const grokOAuthPlugin = authConfigured
         authorizationUrl: grokAuthorizationUrl,
         tokenUrl: grokTokenUrl,
         userInfoUrl: grokUserInfoUrl,
-        scopes: ["openid", "profile", "email"],
-        // `prompt: "login"` forces the broker to re-authenticate against the
-        // upstream on every sign-in instead of silently reusing an existing
-        // broker session. Combined with the broker sending Google
-        // `prompt=select_account`, the user always gets the account chooser
-        // and can pick (or switch) which account to sign in with.
-        authorizationUrlParams: { idp, prompt: "login" },
+        scopes: [...scopes],
+        // Google keeps `prompt: login` so the account chooser always appears.
+        // X omits it — re-prompting would re-show X's users.read/tweet.read
+        // consent on every sign-in, which this app does not need.
+        authorizationUrlParams: prompt ? { idp, prompt } : { idp },
       })),
     })
   : null;

@@ -23,9 +23,33 @@ export type GrokProvider = {
   idp: string;
   /** Human label for the sign-in button. */
   label: string;
+  /**
+   * OIDC scopes asked of the Grok broker (not X/Google's native list).
+   * X is identity-only — no email. Google still needs email for a real address.
+   */
+  scopes: readonly string[];
+  /**
+   * Force the upstream account chooser. Omitted on X so returning visitors
+   * reuse the broker session instead of hitting the X permission wall again.
+   */
+  prompt?: "login";
 };
 
 export const GROK_PROVIDERS: readonly GrokProvider[] = [
-  { providerId: "grok-google", idp: "google", label: "Google" },
-  { providerId: "grok-x", idp: "twitter", label: "X" },
+  {
+    providerId: "grok-google",
+    idp: "google",
+    label: "Google",
+    scopes: ["openid", "profile", "email"],
+    prompt: "login",
+  },
+  {
+    providerId: "grok-x",
+    idp: "twitter",
+    label: "X",
+    // Identity only. The broker still asks X for users.read + tweet.read
+    // (X requires tweet.read to resolve /2/users/me) — we do not add email
+    // or any write/follow/DM scopes on our side.
+    scopes: ["openid", "profile"],
+  },
 ];

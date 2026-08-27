@@ -15,7 +15,8 @@ function Login() {
         </Link>
         <h1 className="text-xl font-medium tracking-tight">Come in</h1>
         <p className="mt-2 text-sm leading-relaxed text-muted">
-          Sign in, pick up the board, leave it ready for the next person — or the next agent.
+          Sign in, pick up the board, leave it ready for the next person — or the next agent. X is
+          identity only: we never post, follow, or read your timeline.
         </p>
         <div className="mt-6 space-y-2">
           {authEnabled ? (
