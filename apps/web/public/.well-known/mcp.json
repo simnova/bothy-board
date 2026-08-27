@@ -1,0 +1,9 @@
+{
+  "name": "bothy-board",
+  "description": "Fail-closed dequeue for humans and coding agents. Planted+ready is the only next.",
+  "url": "/api/mcp",
+  "transport": "streamable-http",
+  "skill": "/skills/bothy-board/SKILL.md",
+  "llms": "/llms.txt",
+  "auth": "Authorization: Bearer <PAT>"
+}

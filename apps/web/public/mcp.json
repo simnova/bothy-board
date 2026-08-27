@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "bothy-board": {
+      "url": "https://bothyboard.com/api/mcp",
+      "headers": {
+        "Authorization": "Bearer ${BOTHY_BOARD_PAT}",
+        "X-Grok-Session-Id": "${GROK_SESSION_ID}"
+      }
+    }
+  },
+  "skill": "/skills/bothy-board/SKILL.md",
+  "llms": "/llms.txt"
+}

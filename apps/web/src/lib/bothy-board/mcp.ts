@@ -45,29 +45,41 @@ type Rpc = {
 
 const PROTOCOL = "2025-03-26";
 
-const INSTRUCTIONS = `BothyBoard is the shared shelter — a logbook for humans and coding agents. Duck in, do the work, leave it ready. Grok sessions are local (~/.grok/sessions); BothyBoard is the ledger.
+const INSTRUCTIONS = `BothyBoard is the shared shelter — a logbook for humans and coding agents.
 
-Orchestrator (before spawn):
-1. bothy-board.tasks.next — Planted+ready only; {task:null} means no candidate.
-2. bothy-board.sessions.mint { taskId, machineName } — mints a UUID, writes it on the task, returns spawnCommand.
-3. Run: grok -s <grokSessionId> -w -p "…"  (do not resume with -s).
-4. After spawn_subagent, bothy-board.sessions.bind { grokSessionId, grokSubagentId, taskId, machineName }.
-5. Land only via bothy-board.tasks.proofs.set (factory:land). Workers set review, never done.
+Install the skill: GET /skills/bothy-board/SKILL.md → .grok/skills/bothy-board/SKILL.md
+Discovery: GET /api/mcp (no auth), /llms.txt, /mcp.json. Resource bothy://skill is the same markdown.
 
-Worker (inside the Grok session):
-- Pass grokSessionId from GROK_SESSION_ID (env) or header X-Grok-Session-Id on every bind/heartbeat.
-- bothy-board.tasks.get for the spec. Do not trust a stale spawn prompt.
-- bothy-board.mailbox.poll { taskId, since } every few turns — this is how other agents talk to you. Grok cannot prompt a running subagent.
-- bothy-board.agents.heartbeat with grokSessionId + machineName.
-- On finish: bothy-board.tasks.update status=review. Leave the session parked for resume_from.
-- If you cannot continue: bothy-board.tasks.release. Do not rewrite done_when.
-- Append failed approaches with bothy-board.tasks.treatments.fail { name, produced }.
+Orchestrator: tasks.next (Planted+ready only; {task:null} is success) → sessions.mint → grok -s <id> -w → sessions.bind → worktrees.register. Land only via tasks.proofs.set (factory:land). Workers set review, never done.
 
-Owner plants with bothy-board.tasks.plant after TREE done_when is valid. Create refuses title-only.
+Worker: bind GROK_SESSION_ID, tasks.get (body is the contract), mailbox.poll {since}, heartbeat. Dead end: treatments.fail. Cannot continue: tasks.release. Do not rewrite done_when after Planted.
 
-Corrections: bothy-board.sessions.resume { taskId, machineName }. If allowed, grok --resume <id> or spawn_subagent resume_from=<grokSubagentId> (in-place, same machine, child must be finished). If parkedOn another machine, comment on the mailbox instead.
+Owner plants with tasks.plant after TREE done_when. Create refuses title-only.
+sync with cacheToken; unchanged=true means skip reload.`;
 
-bothy-board.sync with cacheToken; unchanged=true means skip reload.`;
+const SKILL_PATH = "/skills/bothy-board/SKILL.md";
+
+const RESOURCES = [
+  {
+    uri: "bothy://skill",
+    name: "bothy-board skill",
+    mimeType: "text/markdown",
+    description: "Install as .grok/skills/bothy-board/SKILL.md",
+  },
+  {
+    uri: "bothy://llms",
+    name: "llms.txt",
+    mimeType: "text/plain",
+    description: "Agent index of MCP, skill, and protocol",
+  },
+];
+
+async function readPublic(request: Request, path: string): Promise<string> {
+  const url = new URL(path, request.url);
+  const res = await fetch(url.href);
+  if (!res.ok) return INSTRUCTIONS;
+  return res.text();
+}
 
 const TOOLS = [
   {
@@ -775,6 +787,10 @@ export async function handleMcp(request: Request): Promise<Response> {
           protocolVersion: PROTOCOL,
           transport: "streamable-http",
           tools: TOOLS.map((t) => t.name),
+          skill: SKILL_PATH,
+          llms: "/llms.txt",
+          mcpJson: "/mcp.json",
+          auth: "Authorization: Bearer <PAT>",
         },
         200,
         request,
@@ -802,8 +818,8 @@ export async function handleMcp(request: Request): Promise<Response> {
       return json(
         ok(id, {
           protocolVersion: PROTOCOL,
-          capabilities: { tools: { listChanged: false }, resources: {} },
-          serverInfo: { name: "bothy-board", version: "0.3.0" },
+          capabilities: { tools: { listChanged: false }, resources: { listChanged: false } },
+          serverInfo: { name: "bothy-board", version: "0.4.0" },
           instructions: INSTRUCTIONS,
         }),
         200,
@@ -812,6 +828,27 @@ export async function handleMcp(request: Request): Promise<Response> {
     }
     if (method === "notifications/initialized" || method === "ping") {
       return json(ok(id, {}), 200, request);
+    }
+    if (method === "resources/list") {
+      return json(ok(id, { resources: RESOURCES }), 200, request);
+    }
+    if (method === "resources/read") {
+      const uri = String((params as { uri?: string }).uri ?? "");
+      const path = uri === "bothy://llms" ? "/llms.txt" : SKILL_PATH;
+      const text = await readPublic(request, path);
+      return json(
+        ok(id, {
+          contents: [
+            {
+              uri: uri || "bothy://skill",
+              mimeType: path.endsWith(".txt") ? "text/plain" : "text/markdown",
+              text,
+            },
+          ],
+        }),
+        200,
+        request,
+      );
     }
     if (method === "tools/list") {
       const tools = TOOLS.filter((t) => {

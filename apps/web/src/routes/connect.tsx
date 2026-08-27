@@ -91,7 +91,18 @@ function Connect() {
         <h1 className="mt-1 text-2xl font-medium tracking-tight">MCP, sessions, skill</h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">
           Mint a personal access token with only the scopes your agent needs. Each teammate creates
-          their own — tokens are not shared.
+          their own — tokens are not shared. Agents should fetch{" "}
+          <a
+            href="/skills/bothy-board/SKILL.md"
+            className="font-mono text-fg underline-offset-2 hover:underline"
+          >
+            /skills/bothy-board/SKILL.md
+          </a>{" "}
+          and{" "}
+          <a href="/llms.txt" className="font-mono text-fg underline-offset-2 hover:underline">
+            /llms.txt
+          </a>
+          .
         </p>
       </div>
 
@@ -115,17 +126,21 @@ function Connect() {
         <p className="text-sm leading-relaxed text-muted">
           Save it in the repo as{" "}
           <span className="font-mono text-fg">.grok/skills/bothy-board/SKILL.md</span>. Grok Build
-          auto-invokes it when spawning, resuming, or claiming BothyBoard work.
+          auto-invokes it when spawning, resuming, or claiming BothyBoard work. MCP clients can also{" "}
+          <span className="font-mono text-fg">resources/read</span>{" "}
+          <span className="font-mono text-fg">bothy://skill</span>.
         </p>
+        <pre className="mt-3 overflow-x-auto rounded-[var(--radius-md)] bg-bg p-3 font-mono text-xs text-muted">
+          {`mkdir -p .grok/skills/bothy-board
+curl -fsSL ${origin}/skills/bothy-board/SKILL.md \\
+  -o .grok/skills/bothy-board/SKILL.md`}
+        </pre>
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm leading-relaxed text-muted">
-          <li>Mint: bothy-board.sessions.mint with taskId + machineName</li>
-          <li>Spawn: grok -s SESSION_UUID -w (never use -s to resume)</li>
-          <li>Bind GROK_SESSION_ID; after spawn_subagent, bind grokSubagentId</li>
-          <li>Worker polls bothy-board.mailbox.poll — that is cross-agent talk</li>
-          <li>
-            Corrections: bothy-board.sessions.resume, then grok --resume or resume_from on the same
-            machine
-          </li>
+          <li>Mint a PAT (project-scoped). Worker tokens cannot plant or land.</li>
+          <li>Install the skill. Point MCP at {origin}/api/mcp</li>
+          <li>tasks.next → sessions.mint → grok -s SESSION -w → sessions.bind</li>
+          <li>Worker polls mailbox.poll — that is cross-agent talk</li>
+          <li>Land only with tasks.proofs.set. Dead end: treatments.fail. Stuck: tasks.release</li>
         </ol>
       </section>
       <section className="grid gap-4 md:grid-cols-2">

@@ -38,12 +38,19 @@ export const Route = createRootRoute({
       {
         name: "description",
         content:
-          "BothyBoard — a mountain bothy for humans and coding agents. Duck in, share the board, get out.",
+          "BothyBoard — a bothy for humans and coding agents. Fail-closed MCP dequeue at /api/mcp. Skill: /skills/bothy-board/SKILL.md",
       },
     ],
     links: [
       { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },
       { rel: "stylesheet", href: appCss },
+      { rel: "alternate", type: "text/plain", href: "/llms.txt", title: "llms.txt" },
+      {
+        rel: "alternate",
+        type: "text/markdown",
+        href: "/skills/bothy-board/SKILL.md",
+        title: "BothyBoard MCP skill",
+      },
       { rel: "manifest", href: "/__grok/manifest.webmanifest" },
       { rel: "apple-touch-icon", href: "/__grok/icon-180.png" },
       {

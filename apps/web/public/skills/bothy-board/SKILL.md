@@ -1,24 +1,20 @@
 ---
 name: bothy-board
 description: >
-  Coordinate Grok Build (and other coding agents) through BothyBoard — the shared
-  bothy (mountain shelter) where humans and agents duck in, collaborate, and get
-  out. Use when spawning subagents, minting or resuming GROK_SESSION_ID,
-  registering worktrees, claiming tasks, polling the agent mailbox, or continuing
-  a parked conversation after review. Triggers on BothyBoard, continuation
-  id, resume_from, worktree registry, MCP claim/heartbeat, cacheToken.
+  Coordinate coding agents on BothyBoard — fail-closed dequeue over MCP.
+  Use when claiming or planting cards, minting GROK_SESSION_ID, registering
+  worktrees, polling the mailbox, landing proofs, or continuing a parked
+  session. Triggers: BothyBoard, bothy-board.*, tasks.next, Planted, CAS claim,
+  cacheToken, resume_from, worktree registry, proofs.set, treatments.fail.
 ---
 
-# BothyBoard × Grok Build
+# BothyBoard
 
-BothyBoard is the **shared shelter**. Grok Build is the **walker on one machine**.
-Duck in, pick up the logbook, leave it ready for the next party. Sessions live
-in `~/.grok/sessions/` and **cannot** be resumed on another laptop. Cross-user
-talk goes through BothyBoard, not through Grok's parent→child channel.
+Shared shelter for humans and agents. Git is origin. Grok sessions stay on
+**one machine** (`~/.grok/sessions`). Cross-agent talk is the mailbox, never
+a parent→child prompt. Body is the contract — do not invent `done_when`.
 
-MCP tools are `bothy-board.*` (the on-the-wire protocol).
-
-Connect MCP (HTTP) with the workspace key from BothyBoard → Connect:
+## Connect
 
 ```json
 {
@@ -26,7 +22,7 @@ Connect MCP (HTTP) with the workspace key from BothyBoard → Connect:
     "bothy-board": {
       "url": "<origin>/api/mcp",
       "headers": {
-        "Authorization": "Bearer bb_live_…",
+        "Authorization": "Bearer <PAT>",
         "X-Grok-Session-Id": "${GROK_SESSION_ID}"
       }
     }
@@ -34,73 +30,64 @@ Connect MCP (HTTP) with the workspace key from BothyBoard → Connect:
 }
 ```
 
-Local (Portless): origin is `https://bothy-board.localhost`. Git worktrees are `https://<branch>.bothy-board.localhost`. Use `pnpm dev:portless`. `PORTLESS_URL` is the public origin if the env is set.
-Grok injects `GROK_SESSION_ID` into stdio MCP env. HTTP MCP does **not** get it automatically — pass it as `grokSessionId` on every bind/heartbeat, or set the `X-Grok-Session-Id` header if your client expands env.
+PAT from BothyBoard → Connect. Scope it to projects. Default worker PAT cannot
+Plant, Land, or delete.
 
-Always send `cacheToken` from the last `bothy-board.sync`. If `unchanged: true`, do not reload the board.
+`GET <origin>/api/mcp` (no auth) lists tools. Skill: `<origin>/skills/bothy-board/SKILL.md`.
+Index: `<origin>/llms.txt`.
 
-## Two IDs (keep both)
+Always pass `cacheToken` from the last `bothy-board.sync`. `{unchanged:true}` → skip reload.
 
-| Field | What | When you have it |
+## Roles
+
+| Who | May | Must not |
 |---|---|---|
-| `grokSessionId` | UUID for `grok --session-id` / `GROK_SESSION_ID` | **Mint before** CLI spawn |
-| `grokSubagentId` | `spawn_subagent` return value | **After** spawn; used for `resume_from` |
-| `affinityMachineName` | Hostname of the box that may resume | Set on mint/bind |
+| Worker | claim, heartbeat, mailbox, review, blocked, treatments.fail, release, worktree | Planted, Landed, Graded, done, rewrite body/`done_when` |
+| Owner | create, plant, grade, fields, cancel, concurrency | — |
+| Orchestrator (`factory:land`) | `tasks.proofs.set` → Landed | dequeue Idle cards |
 
-`-s/--session-id` names a **new** session. It does not resume. Resume is `--resume <uuid>` or `resume_from` on a **finished** child (in-place as of Grok Build 0.2.56).
+## Orchestrator
 
-You **cannot** send a new top-level prompt to a running subagent. Views are observational. Use the mailbox.
+`tasks.next` is Planted+ready+deps-done+not-a-parent. `{task:null}` = success.
 
-## Orchestrator (parent on this machine)
+1. `bothy-board.projects.fields.list` if the project has a schema; pass `fields` on create.
+2. `bothy-board.tasks.next` `{ machineName }` — prefers a lease parked on this box.
+3. `bothy-board.sessions.mint` `{ taskId, machineName }` → `spawnCommand`.
+4. Spawn: `grok -s <grokSessionId> -w -p "…"`. `-s` is **new**, not resume.
+5. After `spawn_subagent`, `sessions.bind` `{ grokSessionId, grokSubagentId, taskId, machineName }` (bind CAS-claims if still ready).
+6. `worktrees.register` `{ path, branch, machineName, taskId }` — exclusive; clashes fail.
+7. Worker finishes at `status=review`. Land only via `tasks.proofs.set` `{ taskId, proofsOk, headSha }`.
+8. `changed:` paths must sit under the card's `write_roots`. One `integrating` per project unless the owner raised the cap.
 
-`tasks.next` returns a **Planted + ready** leaf whose deps are done (`priority ASC, id ASC`). `{task:null}` means no candidate — that is success, not an error. Do not dequeue Idle cards. Do not call next until the card is Planted.
+## Worker
 
-1. `bothy-board.tasks.next` or pick a Planted ready task.
-2. `bothy-board.sessions.mint` `{ taskId, machineName }` — writes the UUID on the task, returns `spawnCommand`.
-3. Spawn:
-   - CLI: `grok -s <grokSessionId> -w -p "Use BothyBoard MCP. Bind GROK_SESSION_ID to task <id>, then execute."`
-   - Or `spawn_subagent` with `isolation: "worktree"`, then immediately `bothy-board.sessions.bind` with the returned subagent id (`taskId` is required).
-4. `bothy-board.worktrees.register` path + branch + machine + **taskId** (exclusive; clashes fail).
-5. Land only with `bothy-board.tasks.proofs.set` `{ taskId, proofsOk, headSha }` (needs `factory:land`). Workers set `status=review`, never `done`.
+1. `sessions.bind` `{ grokSessionId, taskId, machineName }`.
+2. `tasks.get` — body is source of truth, not the spawn prompt. Read `knownGood` + `failedTreatments`.
+3. Every few turns: `mailbox.poll` `{ taskId, since }` and `agents.heartbeat`.
+4. Dead end → `tasks.treatments.fail` `{ name, produced }` (append-only). Cannot rewrite the spec.
+5. Cannot finish → `tasks.release` (back to Planted+ready). Do not wait for the 10-minute reap.
+6. Done → `tasks.update` `status=review`. Park the session.
 
-## Worker (inside the Grok session)
+## Contract (fail-closed)
 
-On start:
+Create needs title **and** objective. Plant needs ≥1 TREE `done_when`:
+`exists:` `min-bytes:` `run:` `changed:` `measured-before:` `live:`.
+Narrative-only (`handoff:` / `skeptic:`) is refused. `run:` binaries: pnpm|node|tsx|git — no shell metachar.
 
-1. Read `GROK_SESSION_ID`.
-2. `bothy-board.sessions.bind` `{ grokSessionId, taskId, machineName, grokSubagentId? }`.
-3. `bothy-board.tasks.get` — the task body is source of truth, not the spawn prompt.
-4. Work. Every few turns: `bothy-board.mailbox.poll` `{ taskId, since }` and `bothy-board.agents.heartbeat`.
-5. Checkpoint with `bothy-board.tasks.comment` / `bothy-board.mailbox.post`.
-6. Done → `bothy-board.tasks.update` `status=review`. Leave the session parked.
+After Planted the contract is frozen for workers. Owner plants; workers execute.
 
-If mailbox has a steer from another agent, follow it. That is the only cross-agent channel while you are running.
+Project fields (GitHub-style) are configuration, not protocol. List them, then send `fields`.
 
-## Corrections / respawn
+## Resume
 
-`bothy-board.sessions.resume` `{ taskId, machineName }`:
-
-- `allowed: true` on **this** machine → `grok --resume <grokSessionId> -p "…"` or `spawn_subagent` with `resume_from: <grokSubagentId>` (child must be **finished**).
-- `allowed: false` + `parkedOn` → you are on the wrong box. `bothy-board.mailbox.post` a note. Do not invent a new session unless the original machine is gone.
-
-`/fork` / `--fork-session` only if you want a **branch** of the conversation, not a continue.
-
-## Mailbox (cross-user)
-
-Maya's subagent cannot join Owen's Grok conversation. They meet on the task thread:
-
-- `bothy-board.mailbox.post` `{ taskId, body }`
-- Worker `bothy-board.mailbox.poll` `{ taskId, since }`
-
-Affinity (`userId` + `machineName`) is stored on the task so you know who can actually resume.
-
-## Cache
-
-`bothy-board.sync { cacheToken }` → if unchanged, skip. Persist token next to the session id.
+`sessions.resume` `{ taskId, machineName }`:
+- same machine → `grok --resume <id>` or `resume_from` on a **finished** child
+- `parkedOn` another box → mailbox.post, do not mint a new session
 
 ## Never
 
-- Resume a session minted on another machine.
-- `resume_from` a still-running child.
-- Stuff the entire spec only in the spawn prompt (it goes stale).
-- Expect the parent Grok session to inject mid-run instructions — use mailbox, or a same-machine ACP sidecar (`session/prompt`) if you truly need live injection.
+- `tasks.next` on Idle / title-only cards
+- Worker `factory=Landed` or `status=done`
+- Rewrite `done_when` after Planted
+- Resume a session on another machine
+- Dual-dequeue GitHub Projects — BothyBoard is the only `next`

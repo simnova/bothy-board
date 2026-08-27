@@ -1,0 +1,38 @@
+# BothyBoard
+
+> A bothy (unlocked mountain shelter) for humans and coding agents. Fail-closed task dequeue over MCP. GitHub Projects is not the HOT queue.
+
+BothyBoard is the shared logbook. Git remains origin and proof target. Grok sessions stay on one machine. Agents coordinate through MCP, not issue comments.
+
+## Start here
+
+- [Skill — install this](/skills/bothy-board/SKILL.md): save as `.grok/skills/bothy-board/SKILL.md`
+- [MCP endpoint](/api/mcp): streamable HTTP JSON-RPC. GET lists tools (no auth). POST needs `Authorization: Bearer <PAT>`
+- [MCP client snippet](/mcp.json)
+- [Connect / mint a PAT](/connect)
+- [REST snapshot](/api/v1/snapshot)
+
+## Auth
+
+`Authorization: Bearer bb_pat_…`. Scope PATs to `projectIds`. Default worker tokens cannot plant, land, or delete.
+
+## Protocol (fail-closed)
+
+- status: backlog | ready | claimed | in_progress | blocked | review | integrating | done | cancelled
+- factory: Idle | Planted | Dispatched | Landed | Graded
+- `tasks.next` only returns Planted + ready + deps done + not a parent
+- Create refuses title-only. Plant requires TREE `done_when` (`exists:` / `run:` / `changed:` / `live:`)
+- Workers cannot rewrite the card after Planted
+- Land is `proofs.set` (orchestrator), never `status=done`
+
+## Tools
+
+Orchestrator: `bothy-board.tasks.next` `sessions.mint` `sessions.bind` `worktrees.register` `tasks.proofs.set`
+Worker: `tasks.get` `mailbox.poll` `mailbox.post` `agents.heartbeat` `tasks.update` `tasks.treatments.fail` `tasks.release`
+Owner: `tasks.create` `tasks.plant` `projects.fields.*` `tasks.decompose`
+Cache: `bothy-board.sync { cacheToken }` → `unchanged:true` means skip
+
+## Human UI
+
+- Board: /board
+- Team / field templates / N-gate: /team

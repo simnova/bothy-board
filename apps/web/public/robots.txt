@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Allow: /llms.txt
+Allow: /mcp.json
+Allow: /skills/
+Allow: /api/mcp
+Allow: /.well-known/mcp.json
