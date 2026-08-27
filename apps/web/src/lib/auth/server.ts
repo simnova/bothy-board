@@ -117,28 +117,50 @@ const LOCAL_DEV_ORIGINS: string[] = [
   "http://*.*.localhost",
   ...(portlessUrl ? [portlessUrl] : []),
 ];
-const baseURL = explicitBaseURL ?? {
-  // Include loopback hosts so dynamic baseURL resolves for local email/password
-  // (not only the preview wildcard).
-  allowedHosts: [...previewAllowedHosts, ...LOCAL_DEV_HOSTS],
-  // `auto` → trust both http:// and https:// expansions of allowedHosts
-  // (preview is https; local dev is http).
+// Custom domain (bothyboard.com) plus www / env subdomains. Host-matched lists
+// take the bare host; origin-matched lists take full http(s) URLs.
+const PRODUCTION_HOSTS: string[] = ["bothyboard.com", "*.bothyboard.com"];
+const PRODUCTION_ORIGINS: string[] = [
+  "https://bothyboard.com",
+  "http://bothyboard.com",
+  "https://*.bothyboard.com",
+  "http://*.bothyboard.com",
+];
+function hostFromOrigin(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    return new URL(url).host;
+  } catch {
+    return undefined;
+  }
+}
+const deployedHost = hostFromOrigin(explicitBaseURL);
+const allowedHosts: string[] = [
+  ...previewAllowedHosts,
+  ...LOCAL_DEV_HOSTS,
+  ...PRODUCTION_HOSTS,
+  ...(deployedHost && !PRODUCTION_HOSTS.includes(deployedHost) ? [deployedHost] : []),
+];
+// Dynamic so the OAuth redirect_uri follows the request host (custom domain
+// or *.grok.me). Static BETTER_AUTH_URL alone made bothyboard.com POSTs
+// "Invalid origin" and sent callbacks to the grok.me URL.
+const baseURL = {
+  allowedHosts,
   protocol: "auto" as const,
-  fallback: "http://localhost:8080",
+  fallback: explicitBaseURL ?? "http://localhost:8080",
 };
 
 // Origins Better Auth accepts on credentialed POSTs (sign-up/sign-in, etc.).
 // Missing entries here surface as FORBIDDEN "Invalid origin".
-const trustedOrigins: string[] = explicitBaseURL
-  ? [explicitBaseURL, ...LOCAL_DEV_ORIGINS]
-  : [
-      // Host wildcards (matched against Origin's host)
-      ...previewAllowedHosts,
-      ...LOCAL_DEV_HOSTS,
-      // Full-origin wildcards (matched against Origin)
-      ...previewAllowedHosts.flatMap((host) => [`https://${host}`, `http://${host}`]),
-      ...LOCAL_DEV_ORIGINS,
-    ];
+const trustedOrigins: string[] = [
+  ...(explicitBaseURL ? [explicitBaseURL] : []),
+  ...PRODUCTION_ORIGINS,
+  ...(deployedHost ? [`https://${deployedHost}`, `http://${deployedHost}`] : []),
+  ...previewAllowedHosts,
+  ...LOCAL_DEV_HOSTS,
+  ...previewAllowedHosts.flatMap((host) => [`https://${host}`, `http://${host}`]),
+  ...LOCAL_DEV_ORIGINS,
+];
 
 const databaseUrl = env("DATABASE_URL");
 
