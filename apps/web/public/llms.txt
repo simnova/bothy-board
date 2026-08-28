@@ -21,6 +21,9 @@ BothyBoard is the shared logbook. Git remains origin and proof target. Grok sess
 - status: backlog | ready | claimed | in_progress | blocked | review | integrating | done | cancelled
 - factory: Idle | Planted | Dispatched | Landed | Graded
 - `tasks.next` only returns Planted + ready + deps done + not a parent
+- overlapping in-flight `write_roots` are skipped at next, not only at claim
+- `tasks.next` returns `spawnCommand` + `cacheToken`. `{unchanged:true}` means skip
+- Mailbox is the only mid-run steer; comments are an audit log
 - Create refuses title-only. Plant requires TREE `done_when` (`exists:` / `run:` / `changed:` / `live:`)
 - Workers cannot rewrite the card after Planted
 - Land is `proofs.set` (orchestrator), never `status=done`

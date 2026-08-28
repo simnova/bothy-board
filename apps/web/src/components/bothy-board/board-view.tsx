@@ -210,7 +210,7 @@ function Kanban({
               <h2 className="text-sm font-medium">{col.label}</h2>
               <span className="font-mono text-[11px] tabular-nums text-subtle">{shown.length}</span>
             </header>
-            {col.id === "queue" ? (
+            {col.id === "idle" ? (
               <form
                 className="mb-3 space-y-2"
                 onSubmit={(e) => {
@@ -285,6 +285,11 @@ function TaskCard({
         <Badge tone={task.factory === "Planted" ? "success" : "muted"}>{task.factory}</Badge>
       </div>
       <p className="text-sm font-medium leading-snug">{task.title}</p>
+      {task.knownGood ? (
+        <p className="mt-1 truncate font-mono text-[11px] text-muted">
+          known-good {task.knownGood}
+        </p>
+      ) : null}
       <div className="mt-2 flex flex-wrap items-center gap-2 font-mono text-[10px] text-subtle">
         <span>{shortId(task.id)}</span>
         {task.branch ? (

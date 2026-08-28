@@ -37,23 +37,23 @@ export function worktreeTone(status: WorktreeStatus) {
 }
 
 export const COLUMNS: { id: string; label: string; statuses: TaskStatus[] }[] = [
-  { id: "queue", label: "Queue", statuses: ["backlog", "ready"] },
-  { id: "running", label: "Running", statuses: ["claimed", "in_progress"] },
-  { id: "blocked", label: "Blocked", statuses: ["blocked"] },
-  { id: "review", label: "Review", statuses: ["review", "integrating"] },
-  { id: "done", label: "Done", statuses: ["done"] },
+  { id: "idle", label: "Idle", statuses: ["backlog"] },
+  { id: "planted", label: "Planted", statuses: ["ready"] },
+  { id: "claimed", label: "Claimed", statuses: ["claimed", "in_progress"] },
+  { id: "review", label: "Review", statuses: ["review", "blocked"] },
+  { id: "land", label: "Land", statuses: ["integrating", "done"] },
 ];
 
 export function dropStatus(columnId: string): TaskStatus {
   switch (columnId) {
-    case "running":
+    case "claimed":
       return "in_progress";
-    case "blocked":
-      return "blocked";
     case "review":
       return "review";
-    case "done":
+    case "land":
       return "done";
+    case "idle":
+      return "backlog";
     default:
       return "ready";
   }

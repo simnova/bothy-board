@@ -10,6 +10,7 @@ import {
   failTreatment,
   getTaskDetail,
   heartbeat,
+  importTasks,
   loadSnapshot,
   nextReady,
   plantTask,
@@ -51,12 +52,11 @@ const INSTRUCTIONS = `BothyBoard is the shared shelter — a logbook for humans 
 Install the skill: GET /skills/bothy-board/SKILL.md → .grok/skills/bothy-board/SKILL.md
 Discovery: GET /api/mcp (no auth), /llms.txt, /mcp.json. Resource bothy://skill is the same markdown.
 
-Orchestrator: tasks.next (Planted+ready only; {task:null} is success) → sessions.mint → grok -s <id> -w → sessions.bind → worktrees.register. Land only via tasks.proofs.set (factory:land). Workers set review, never done.
+Orchestrator: tasks.next { machineName, cacheToken } returns spawnCommand — run that, do not invent grok -p. {task:null} and unchanged:true are success. Land only via tasks.proofs.set (attestation). Workers set review, never done.
 
-Worker: bind GROK_SESSION_ID, tasks.get (body is the contract), mailbox.poll {since}, heartbeat. Dead end: treatments.fail. Cannot continue: tasks.release. Do not rewrite done_when after Planted.
+Worker: bind GROK_SESSION_ID, tasks.get, mailbox.poll {since} (the only mid-run steer — comments are an audit log), heartbeat. Dead end: treatments.fail. Cannot continue: tasks.release.
 
-Owner plants with tasks.plant after TREE done_when. Create refuses title-only.
-sync with cacheToken; unchanged=true means skip reload.`;
+Owner plants with tasks.plant after TREE done_when. Create refuses title-only. tasks.import is Idle-only, no auto-plant.`;
 
 const SKILL_PATH = "/skills/bothy-board/SKILL.md";
 
@@ -94,10 +94,13 @@ const TOOLS = [
   {
     name: "bothy-board.tasks.next",
     description:
-      "Next Planted+ready leaf. Pass machineName to prefer a reaped lease parked on this box. {task:null} is success. Refuses if the snapshot would be truncated.",
+      "Next Planted+ready leaf whose write_roots do not overlap in-flight work. Pass machineName (mints spawnCommand) and cacheToken. { task:null } and unchanged:true are success. Run spawnCommand — do not invent grok -p.",
     inputSchema: {
       type: "object",
-      properties: { machineName: { type: "string" } },
+      properties: {
+        machineName: { type: "string" },
+        cacheToken: { type: "string" },
+      },
     },
   },
   {
@@ -126,6 +129,7 @@ const TOOLS = [
         knownGood: { type: "string" },
         outOfScope: { type: "string" },
         notTested: { type: "string" },
+        priority: { type: "string", description: "0–9 or P0/P1/P2. P0 is highest." },
         kind: { type: "string" },
         parentId: { type: "string" },
         projectId: {
@@ -306,6 +310,35 @@ const TOOLS = [
     },
   },
   {
+    name: "bothy-board.tasks.import",
+    description:
+      "Owner/factory:plant: batch-create Idle cards from {title,body,fields,priority}. Fail-closed per card. Does not Plant. Cap 200.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+        cards: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string" },
+              body: { type: "string" },
+              objective: { type: "string" },
+              priority: { type: "string" },
+              fields: { type: "object", additionalProperties: true },
+              lane: { type: "string" },
+              writeRoots: { type: "array", items: { type: "string" } },
+              knownGood: { type: "string" },
+            },
+            required: ["title"],
+          },
+        },
+      },
+      required: ["cards"],
+    },
+  },
+  {
     name: "bothy-board.tasks.proofs.set",
     description:
       "Attestation after the consumer re-ran TREE proofs (exists:/run:/changed:/…). BothyBoard does not execute those commands. proofsOk+headSha → factory=Landed, status=integrating. Requires factory:land. Workers cannot Landed.",
@@ -316,6 +349,11 @@ const TOOLS = [
         proofsOk: { type: "boolean" },
         headSha: { type: "string" },
         reportPath: { type: "string" },
+        reportSha256: {
+          type: "string",
+          description:
+            "SHA-256 hex of the verify JSON at reportPath. Required if reportPath is set.",
+        },
         proofsLines: { type: "array", items: { type: "string" } },
       },
       required: ["taskId", "proofsOk"],
@@ -323,7 +361,8 @@ const TOOLS = [
   },
   {
     name: "bothy-board.tasks.comment",
-    description: "Add a discussion note on a task (same store as mailbox.post).",
+    description:
+      "Audit-log note. Mid-run steer is mailbox.post / mailbox.poll — comments are not the contract and do not reach a running child.",
     inputSchema: {
       type: "object",
       properties: {
@@ -498,7 +537,8 @@ async function callTool(
     taskId &&
     name !== "bothy-board.sync" &&
     name !== "bothy-board.tasks.next" &&
-    name !== "bothy-board.tasks.create"
+    name !== "bothy-board.tasks.create" &&
+    name !== "bothy-board.tasks.import"
   ) {
     await assertTaskAccess(actor, workspaceId, taskId);
   }
@@ -526,8 +566,17 @@ async function callTool(
       });
     }
     case "bothy-board.tasks.next": {
-      const next = await nextReady(workspaceId, filter, { machineName: str(args, "machineName") });
-      return toolResult({ task: next.task });
+      const next = await nextReady(workspaceId, filter, {
+        machineName: str(args, "machineName"),
+        cacheToken: str(args, "cacheToken"),
+      });
+      return toolResult({
+        task: next.task,
+        spawnCommand: next.spawnCommand,
+        grokSessionId: next.grokSessionId,
+        cacheToken: next.cacheToken,
+        unchanged: next.unchanged,
+      });
     }
     case "bothy-board.tasks.get":
       return toolResult({ task: await getTaskDetail(workspaceId, taskId ?? "") });
@@ -546,6 +595,9 @@ async function callTool(
           knownGood: str(args, "knownGood"),
           outOfScope: str(args, "outOfScope"),
           notTested: str(args, "notTested"),
+          priority:
+            str(args, "priority") ??
+            (typeof args["priority"] === "number" ? args["priority"] : undefined),
           kind: args["kind"] as TaskKind | undefined,
           parentId: str(args, "parentId") ?? null,
           depIds: Array.isArray(args["depIds"]) ? args["depIds"].map(String) : [],
@@ -643,6 +695,27 @@ async function callTool(
       });
     case "bothy-board.tasks.plant":
       return toolResult({ task: await plantTask(workspaceId, taskId ?? "") });
+    case "bothy-board.tasks.import": {
+      const projectId = await resolveWriteProject(actor, workspaceId, str(args, "projectId"));
+      const raw = Array.isArray(args["cards"]) ? args["cards"] : [];
+      const cards = raw.map((c) => {
+        const row = c as Record<string, unknown>;
+        return {
+          title: String(row["title"] ?? ""),
+          body: typeof row["body"] === "string" ? row["body"] : undefined,
+          objective: typeof row["objective"] === "string" ? row["objective"] : undefined,
+          priority: (row["priority"] as string | number | undefined) ?? undefined,
+          lane: typeof row["lane"] === "string" ? row["lane"] : undefined,
+          writeRoots: Array.isArray(row["writeRoots"]) ? row["writeRoots"].map(String) : undefined,
+          knownGood: typeof row["knownGood"] === "string" ? row["knownGood"] : undefined,
+          fields:
+            row["fields"] && typeof row["fields"] === "object" && !Array.isArray(row["fields"])
+              ? (row["fields"] as Record<string, string | number | string[] | null>)
+              : undefined,
+        };
+      });
+      return toolResult(await importTasks(workspaceId, projectId, cards));
+    }
     case "bothy-board.tasks.proofs.set":
       return toolResult({
         task: await setProofs(workspaceId, {
@@ -650,6 +723,7 @@ async function callTool(
           proofsOk: Boolean(args["proofsOk"]),
           headSha: str(args, "headSha"),
           reportPath: str(args, "reportPath"),
+          reportSha256: str(args, "reportSha256"),
           proofsLines: Array.isArray(args["proofsLines"])
             ? args["proofsLines"].map(String)
             : undefined,
@@ -826,7 +900,7 @@ export async function handleMcp(request: Request): Promise<Response> {
         ok(id, {
           protocolVersion: PROTOCOL,
           capabilities: { tools: { listChanged: false }, resources: { listChanged: false } },
-          serverInfo: { name: "bothy-board", version: "0.4.1" },
+          serverInfo: { name: "bothy-board", version: "0.5.0" },
           instructions: INSTRUCTIONS,
         }),
         200,

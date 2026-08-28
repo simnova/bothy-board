@@ -92,8 +92,7 @@ export function nextFactoryOnBind(current: FactoryState): FactoryState {
 
 export function writeRootsOverlap(a: string[], b: string[]): boolean {
   if (!a.length || !b.length) return true;
-  const set = new Set(a);
-  return b.some((p) => set.has(p));
+  return a.some((p) => pathUnderRoots(p, b) || b.some((q) => pathUnderRoots(q, [p])));
 }
 
 export function pathUnderRoots(path: string, roots: string[]): boolean {
@@ -145,7 +144,23 @@ export function clampCap(raw: number | null | undefined, fallback: number, max =
   return Math.min(max, Math.max(1, Math.floor(raw)));
 }
 
-/** Dequeue: Planted + ready + deps done + not a parent. Affinity machine sorts first. */
+/** P0 → 0 (highest). Accepts 0-9, "P0", "p1". Unknown → fallback. */
+export function parsePriority(raw: unknown, fallback = 1): number {
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return Math.min(9, Math.max(0, Math.floor(raw)));
+  }
+  const s = String(raw ?? "")
+    .trim()
+    .toUpperCase();
+  if (!s) return fallback;
+  const tagged = /^P([0-9])$/.exec(s);
+  if (tagged?.[1]) return Number(tagged[1]);
+  const n = Number(s);
+  if (Number.isFinite(n)) return Math.min(9, Math.max(0, Math.floor(n)));
+  return fallback;
+}
+
+/** Dequeue: Planted + ready + deps done + not a parent. Skip overlapping in-flight roots. */
 export function dequeueIds<
   T extends {
     id: string;
@@ -155,15 +170,36 @@ export function dequeueIds<
     depIds: string[];
     childCount: number;
     affinityMachineName?: string | null;
+    writeRoots?: string[];
+    projectId?: string;
   },
->(tasks: T[], opts?: { machineName?: string | null | undefined }): string[] {
+>(
+  tasks: T[],
+  opts?: {
+    machineName?: string | null | undefined;
+    maxInFlight?: number | undefined;
+  },
+): string[] {
   const byId = new Map(tasks.map((t) => [t.id, t]));
   const machine = opts?.machineName?.trim() || "";
+  const cap = clampCap(opts?.maxInFlight, MAX_IN_FLIGHT_PER_PROJECT);
   return tasks
     .filter((t) => {
       if (t.childCount > 0) return false;
       if (t.status !== "ready" || t.factory !== "Planted") return false;
-      return t.depIds.every((id) => byId.get(id)?.status === "done");
+      if (!t.depIds.every((id) => byId.get(id)?.status === "done")) return false;
+      const inflight = tasks.filter(
+        (x) =>
+          x.id !== t.id &&
+          (t.projectId == null || x.projectId == null || x.projectId === t.projectId) &&
+          isInFlight(x.status, x.factory),
+      );
+      if (inflight.length >= cap) return false;
+      const mine = t.writeRoots ?? [];
+      if (mine.length && inflight.some((x) => writeRootsOverlap(mine, x.writeRoots ?? []))) {
+        return false;
+      }
+      return true;
     })
     .sort((a, b) => {
       if (machine) {

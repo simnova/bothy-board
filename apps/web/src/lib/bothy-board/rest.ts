@@ -4,12 +4,14 @@ import { listPats, mintPat, revokePat } from "@bothy-board/core/pats";
 import { deleteProject, setProjectVisibility } from "@bothy-board/core/projects";
 import {
   addComment,
+  type CreateTaskInput,
   claimTask,
   createTask,
   decomposeTask,
   failTreatment,
   getTaskDetail,
   heartbeat,
+  importTasks,
   listApiKeys,
   loadSnapshot,
   mintApiKey,
@@ -22,7 +24,6 @@ import {
 } from "@bothy-board/core/queries";
 import {
   enforceActorLimit,
-  enforceDestructiveLimit,
   isRateLimited,
   rateLimitedResponse,
   restKind,
@@ -75,9 +76,29 @@ export async function handleRest(request: Request): Promise<Response> {
       if (blocked) return blocked;
       const next = await nextReady(ws, filter, {
         machineName: url.searchParams.get("machineName"),
+        cacheToken:
+          url.searchParams.get("cacheToken") ||
+          request.headers.get("x-bothy-board-cache-token") ||
+          request.headers.get("if-none-match")?.replaceAll('"', "") ||
+          undefined,
       });
+      if (next.unchanged) {
+        return json({ unchanged: true, cacheToken: next.cacheToken, task: null }, 200, request);
+      }
       const projectKey = filter?.length ? [...filter].sort().join(",") : "";
-      return withCache({ task: next.task }, ws, actor.revision, request, undefined, projectKey);
+      return withCache(
+        {
+          task: next.task,
+          spawnCommand: next.spawnCommand,
+          grokSessionId: next.grokSessionId,
+          cacheToken: next.cacheToken,
+        },
+        ws,
+        actor.revision,
+        request,
+        undefined,
+        projectKey,
+      );
     }
     if (method === "GET" && path === "tasks") {
       const blocked = deny("board:read");
@@ -106,6 +127,13 @@ export async function handleRest(request: Request): Promise<Response> {
       const id = await createTask(ws, { ...body, projectId });
       return json({ id }, 201, request);
     }
+    if (method === "POST" && path === "tasks/import") {
+      const blocked = deny("factory:plant");
+      if (blocked && actor.type !== "user") return blocked;
+      const body = await readJson<{ projectId?: string; cards?: CreateTaskInput[] }>(request);
+      const projectId = await resolveWriteProject(actor, ws, body.projectId);
+      return json(await importTasks(ws, projectId, body.cards ?? []), 200, request);
+    }
     if (parts[0] === "tasks" && parts[1] && parts.length === 2 && method === "GET") {
       const blocked = deny("board:read");
       if (blocked) return blocked;
@@ -121,7 +149,6 @@ export async function handleRest(request: Request): Promise<Response> {
         actor.type === "agent" || (actor.type === "pat" && !hasScope(actor, "factory:plant"))
           ? "agent"
           : "owner";
-      if (patch.status === "cancelled") await enforceDestructiveLimit(actor);
       const task = await updateTask(ws, parts[1], patch);
       if (!task) return json({ error: "not found" }, 404, request);
       return json({ task }, 200, request);
@@ -166,6 +193,7 @@ export async function handleRest(request: Request): Promise<Response> {
         proofsOk?: boolean;
         headSha?: string;
         reportPath?: string;
+        reportSha256?: string;
         proofsLines?: string[];
       }>(request);
       return json(
@@ -175,6 +203,7 @@ export async function handleRest(request: Request): Promise<Response> {
             proofsOk: Boolean(body.proofsOk),
             headSha: body.headSha,
             reportPath: body.reportPath,
+            reportSha256: body.reportSha256,
             proofsLines: body.proofsLines,
           }),
         },

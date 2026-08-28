@@ -12,6 +12,7 @@ import {
   MAX_IN_FLIGHT_PER_PROJECT,
   MAX_INTEGRATING_PER_PROJECT,
   parseFactory,
+  parsePriority,
   SNAPSHOT_TASK_CAP,
   type WriterKind,
   writeRootsOverlap,
@@ -463,7 +464,7 @@ export type CreateTaskInput = {
   kind?: TaskKind | undefined;
   parentId?: string | null | undefined;
   depIds?: string[] | undefined;
-  priority?: number | undefined;
+  priority?: number | string | undefined;
   projectId?: string | undefined;
   objective?: string | undefined;
   doneWhen?: string[] | undefined;
@@ -526,7 +527,7 @@ export async function createTask(workspaceId: string, input: CreateTaskInput) {
       title,
       body,
       input.kind ?? "feature",
-      input.priority ?? 1,
+      input.priority !== undefined ? parsePriority(input.priority) : 1,
       card.lane,
       jsonb(card.writeRoots),
       card.objective,
@@ -544,6 +545,34 @@ export async function createTask(workspaceId: string, input: CreateTaskInput) {
   await recordEvent(sql, workspaceId, "create", `Created ${title}`, id);
   await bumpRevision(sql, workspaceId);
   return id;
+}
+
+export const IMPORT_MAX = 200;
+
+export async function importTasks(
+  workspaceId: string,
+  projectId: string,
+  cards: CreateTaskInput[],
+) {
+  if (cards.length > IMPORT_MAX) {
+    throw new BoardError("too_large", `Import is capped at ${IMPORT_MAX} cards per call.`);
+  }
+  const created: string[] = [];
+  const errors: { index: number; error: string; code?: string | undefined }[] = [];
+  for (const [index, card] of cards.entries()) {
+    try {
+      const id = await createTask(workspaceId, { ...card, projectId });
+      created.push(id);
+    } catch (err) {
+      const item: { index: number; error: string; code?: string } = {
+        index,
+        error: err instanceof Error ? err.message : "import failed",
+      };
+      if (err instanceof BoardError) item.code = err.code;
+      errors.push(item);
+    }
+  }
+  return { created, errors, imported: created.length, refused: errors.length };
 }
 
 export async function plantTask(workspaceId: string, taskId: string) {
@@ -611,6 +640,7 @@ export async function setProofs(
     proofsOk: boolean;
     headSha?: string | undefined;
     reportPath?: string | undefined;
+    reportSha256?: string | undefined;
     proofsLines?: string[] | undefined;
   },
 ) {
@@ -653,17 +683,19 @@ export async function setProofs(
   if ((integrating[0]?.n ?? 0) >= cap) {
     throw new BoardError("lane_busy", "Serial integrate: another card is already integrating.");
   }
+  const reportPath = input.reportPath?.trim() || null;
+  const reportSha = input.reportSha256?.trim().toLowerCase() || null;
+  if (reportPath && !/^[a-f0-9]{64}$/.test(reportSha ?? "")) {
+    throw new BoardError(
+      "invalid_card",
+      "reportPath requires reportSha256 (64-char hex of the verify JSON).",
+    );
+  }
   await sql.query(
     `update tasks set factory = 'Landed', status = 'integrating', proofs_ok = true,
-      proofs_head_sha = $3, proofs_report_path = $4, proofs_lines = $5::jsonb, updated_at = now()
+      proofs_head_sha = $3, proofs_report_path = $4, proofs_report_sha256 = $5, proofs_lines = $6::jsonb, updated_at = now()
      where workspace_id = $1 and id = $2`,
-    [
-      workspaceId,
-      input.taskId,
-      input.headSha ?? null,
-      input.reportPath ?? null,
-      jsonb(proofsLines),
-    ],
+    [workspaceId, input.taskId, input.headSha ?? null, reportPath, reportSha, jsonb(proofsLines)],
   );
   await recordEvent(sql, workspaceId, "landed", `${t.title} Landed`, input.taskId);
   await bumpRevision(sql, workspaceId);
@@ -679,7 +711,7 @@ export async function updateTask(
     status?: TaskStatus | undefined;
     factory?: FactoryState | undefined;
     kind?: TaskKind | undefined;
-    priority?: number | undefined;
+    priority?: number | string | undefined;
     continuationId?: string | null | undefined;
     grokSessionId?: string | null | undefined;
     grokSubagentId?: string | null | undefined;
@@ -751,7 +783,7 @@ export async function updateTask(
     kind: patch.kind ?? t.kind,
     factory:
       patch.status === "cancelled" ? ("Idle" as const) : (patch.factory ?? parseFactory(t.factory)),
-    priority: patch.priority ?? t.priority,
+    priority: patch.priority !== undefined ? parsePriority(patch.priority) : t.priority,
     continuationId: patch.continuationId === undefined ? t.continuation_id : patch.continuationId,
     grokSessionId: patch.grokSessionId === undefined ? t.grok_session_id : patch.grokSessionId,
     grokSubagentId: patch.grokSubagentId === undefined ? t.grok_subagent_id : patch.grokSubagentId,
@@ -874,6 +906,9 @@ export async function claimTask(
   );
   const t = current[0];
   if (!t) throw new BoardError("not_found", "Task not found.");
+  if (!agent.machineName?.trim()) {
+    throw new BoardError("not_ready", "machineName required to claim.");
+  }
   const kids = await sql<{ n: number }>`
     select count(*)::int as n from tasks where workspace_id = ${workspaceId} and parent_id = ${taskId} and deleted_at is null`;
   assertClaimable({
@@ -1109,15 +1144,35 @@ export async function registerWorktree(
   },
 ) {
   if (!input.taskId) throw new BoardError("task_required", "worktrees.register requires taskId.");
+  if (!input.machineName?.trim()) {
+    throw new BoardError("worktree_busy", "machineName required to register a worktree.");
+  }
   const sql = await getSql();
-  const task = await sql<{ project_id: string }>`
-    select project_id from tasks where workspace_id = ${workspaceId} and id = ${input.taskId} and deleted_at is null limit 1`;
+  const task = await sql<{
+    project_id: string;
+    affinity_machine_name: string | null;
+    worktree_path: string | null;
+  }>`
+    select project_id, affinity_machine_name, worktree_path
+    from tasks where workspace_id = ${workspaceId} and id = ${input.taskId} and deleted_at is null limit 1`;
   const projectId = task[0]?.project_id;
   if (!projectId) throw new BoardError("not_found", "Task not found.");
+  const parked = task[0]?.affinity_machine_name?.trim();
+  const machine = input.machineName.trim();
+  if (parked && parked !== machine) {
+    throw new BoardError(
+      "worktree_busy",
+      `Worktree machine must match claim affinity (${parked}).`,
+    );
+  }
+  const existingPath = task[0]?.worktree_path?.trim();
+  if (existingPath && existingPath !== input.path) {
+    throw new BoardError("worktree_busy", "Worktree path must match the claimed checkout.");
+  }
   const clashAgent = await sql<{ agent_id: string | null }>`
     select agent_id from worktrees
     where workspace_id = ${workspaceId} and status = ${"active"}
-      and path = ${input.path} and machine_name = ${input.machineName ?? ""}
+      and path = ${input.path} and machine_name = ${machine}
       and agent_id is not null and agent_id <> ${input.agentId ?? ""}
     limit 1`;
   if (clashAgent[0]) {
@@ -1126,7 +1181,7 @@ export async function registerWorktree(
   const clashMachine = await sql<{ machine_name: string }>`
     select machine_name from worktrees
     where workspace_id = ${workspaceId} and status = ${"active"}
-      and path = ${input.path} and machine_name <> ${input.machineName ?? ""}
+      and path = ${input.path} and machine_name <> ${machine}
     limit 1`;
   if (clashMachine[0]) {
     throw new BoardError("worktree_busy", `Path is active on ${clashMachine[0].machine_name}.`);
@@ -1143,7 +1198,7 @@ export async function registerWorktree(
   } else {
     await sql`insert into worktrees (id, workspace_id, project_id, agent_id, task_id, path, branch, machine_name, status)
       values (${id}, ${workspaceId}, ${projectId}, ${input.agentId ?? null}, ${input.taskId ?? null},
-        ${input.path}, ${input.branch}, ${input.machineName ?? ""}, ${input.status ?? "active"})`;
+        ${input.path}, ${input.branch}, ${machine}, ${input.status ?? "active"})`;
   }
   await sql`update tasks set branch = ${input.branch}, worktree_path = ${input.path}, updated_at = now()
     where workspace_id = ${workspaceId} and id = ${input.taskId}`;
@@ -1162,13 +1217,24 @@ export async function registerWorktree(
 export async function nextReady(
   workspaceId: string,
   projectIds?: string[] | null,
-  opts?: { machineName?: string | null | undefined },
+  opts?: {
+    machineName?: string | null | undefined;
+    cacheToken?: string | null | undefined;
+  },
 ) {
   await reapStaleAgents(workspaceId);
   const sql = await getSql();
   const ws = await sql<{ name: string; revision: number }>`
     select name, revision from workspaces where id = ${workspaceId}`;
-  if (!ws[0]) return { task: null as CompactTask | null, incomplete: false };
+  const empty = {
+    task: null as CompactTask | null,
+    spawnCommand: null as string | null,
+    grokSessionId: null as string | null,
+    cacheToken: "" as string,
+    unchanged: false,
+    incomplete: false,
+  };
+  if (!ws[0]) return empty;
   const count = await sql<{ n: number }>`
     select count(*)::int as n from tasks where workspace_id = ${workspaceId} and deleted_at is null`;
   if ((count[0]?.n ?? 0) > SNAPSHOT_TASK_CAP) {
@@ -1184,9 +1250,53 @@ export async function nextReady(
       "Snapshot truncated — refuse next rather than rank a prefix.",
     );
   }
-  const id = dequeueIds(snap.tasks, { machineName: opts?.machineName ?? null })[0];
-  const task = id ? (snap.tasks.find((t) => t.id === id) ?? null) : null;
-  return { task, incomplete: false };
+  if (opts?.cacheToken && opts.cacheToken === snap.cacheToken) {
+    return { ...empty, cacheToken: snap.cacheToken, unchanged: true };
+  }
+  const cap = snap.project.maxInFlight;
+  const id = dequeueIds(snap.tasks, {
+    machineName: opts?.machineName ?? null,
+    maxInFlight: cap,
+  })[0];
+  let task = id ? (snap.tasks.find((t) => t.id === id) ?? null) : null;
+  if (!task) {
+    return { ...empty, cacheToken: snap.cacheToken };
+  }
+  const { mintSession, spawnCommand } = await import("./sessions");
+  let session = task.grokSessionId;
+  let spawn: string | null = null;
+  const machine = opts?.machineName?.trim() || task.affinityMachineName || "";
+  if (session) {
+    spawn = spawnCommand(session, task.id);
+  } else {
+    const minted = await mintSession(workspaceId, task.id, { machineName: machine });
+    session = minted?.grokSessionId ?? null;
+    spawn = minted?.spawnCommand ?? null;
+    if (minted?.task) {
+      task = {
+        ...task,
+        grokSessionId: minted.task.grokSessionId,
+        continuationId: minted.task.continuationId,
+        affinityMachineName: minted.task.affinityMachineName,
+      };
+    }
+  }
+  const rev = await sql<{
+    revision: number;
+  }>`select revision from workspaces where id = ${workspaceId}`;
+  const token = cacheTokenFor(
+    workspaceId,
+    rev[0]?.revision ?? snap.revision,
+    projectIds?.length ? [...projectIds].sort().join(",") : "",
+  );
+  return {
+    task,
+    spawnCommand: spawn,
+    grokSessionId: session,
+    cacheToken: token,
+    unchanged: false,
+    incomplete: false,
+  };
 }
 
 export async function releaseTask(workspaceId: string, taskId: string, agentId?: string | null) {

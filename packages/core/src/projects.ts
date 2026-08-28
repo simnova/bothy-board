@@ -229,6 +229,24 @@ export async function publicProjectCard(projectId: string, viewerUserId: string 
     ownerHandle: owner[0]?.handle ?? "owner",
     isMember: Boolean(role),
     myRole: role,
+    planted: await sql<{
+      id: string;
+      title: string;
+      factory: string;
+      status: string;
+      known_good: string;
+      grok_session_id: string | null;
+      affinity_machine_name: string | null;
+      objective: string;
+    }>`
+      select id, title, factory, status, coalesce(known_good, '') as known_good,
+             grok_session_id, affinity_machine_name, coalesce(objective, '') as objective
+      from tasks
+      where project_id = ${project.id} and deleted_at is null
+        and factory in ('Planted', 'Dispatched')
+        and status in ('ready', 'claimed', 'in_progress', 'review')
+      order by priority asc, id asc
+      limit 80`,
   };
 }
 

@@ -48,16 +48,16 @@ Always pass `cacheToken` from the last `bothy-board.sync`. `{unchanged:true}` �
 
 ## Orchestrator
 
-`tasks.next` is Planted+ready+deps-done+not-a-parent. `{task:null}` = success.
+`tasks.next` is Planted+ready+deps-done+not-a-parent+non-overlapping roots.
+`{task:null}` and `{unchanged:true}` are success. Run the returned `spawnCommand`.
 
 1. `bothy-board.projects.fields.list` if the project has a schema; pass `fields` on create.
-2. `bothy-board.tasks.next` `{ machineName }` — prefers a lease parked on this box.
-3. `bothy-board.sessions.mint` `{ taskId, machineName }` → `spawnCommand`.
-4. Spawn: `grok -s <grokSessionId> -w -p "…"`. `-s` is **new**, not resume.
-5. After `spawn_subagent`, `sessions.bind` `{ grokSessionId, grokSubagentId, taskId, machineName }` (bind CAS-claims if still ready).
-6. `worktrees.register` `{ path, branch, machineName, taskId }` — exclusive; clashes fail.
-7. Worker finishes at `status=review`. Land only via `tasks.proofs.set` `{ taskId, proofsOk, headSha }` — attestation after you re-ran TREE proofs. BothyBoard does not exec `run:`/`exists:`.
-8. `changed:` paths must sit under the card's `write_roots`. One `integrating` per project unless the owner raised the cap.
+2. `bothy-board.tasks.next` `{ machineName, cacheToken }` — persist cacheToken.
+3. Spawn with `spawnCommand` (already `grok -s <id> -w`). Do not invent a fresh `grok -p`.
+4. After `spawn_subagent`, `sessions.bind` `{ grokSessionId, grokSubagentId, taskId, machineName }`.
+5. `worktrees.register` `{ path, branch, machineName, taskId }` — must match claim machine.
+6. Mid-run steer is **only** `mailbox.post` / `mailbox.poll`. `tasks.comment` is an audit log; it does not reach a running child.
+7. Worker finishes at `status=review`. Land via `tasks.proofs.set` `{ proofsOk, headSha, reportPath, reportSha256 }` — attestation, not a runner.
 
 ## Worker
 

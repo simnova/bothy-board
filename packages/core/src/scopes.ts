@@ -32,6 +32,7 @@ export const PAT_SCOPES = [
     hint: "Owner: Idle → Planted, plus field schema. Not on default worker tokens.",
     tools: [
       "bothy-board.tasks.plant",
+      "bothy-board.tasks.import",
       "bothy-board.projects.create",
       "bothy-board.projects.fields.set",
       "bothy-board.projects.fields.applyTemplate",

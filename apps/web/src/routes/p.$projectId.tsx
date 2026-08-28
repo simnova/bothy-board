@@ -61,6 +61,28 @@ function PublicProjectPage() {
                 @{card.data.ownerHandle}
               </Link>
             </p>
+            {card.data.planted?.length ? (
+              <ul className="mt-6 space-y-2">
+                {card.data.planted.map((t) => (
+                  <li
+                    key={t.id}
+                    className="rounded-[var(--radius-md)] border border-border bg-bg px-3 py-2"
+                  >
+                    <p className="text-sm font-medium">{t.title}</p>
+                    <p className="mt-1 font-mono text-[11px] text-subtle">
+                      {t.factory} · {t.status}
+                      {t.known_good ? ` · known-good ${t.known_good}` : ""}
+                      {t.grok_session_id ? ` · sess ${t.grok_session_id.slice(0, 8)}` : ""}
+                    </p>
+                    {t.objective ? (
+                      <p className="mt-1 line-clamp-2 text-xs text-muted">{t.objective}</p>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-6 text-sm text-subtle">No Planted cards on this board.</p>
+            )}
             {card.data.isMember ? (
               <Button asChild className="mt-4">
                 <Link to="/board">Open board</Link>
