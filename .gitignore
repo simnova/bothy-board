@@ -24,7 +24,6 @@ screenshots/
 /src
 /public
 /server
-/vite.config.ts
 /migrations
 .project_id
 .node_modules.lock

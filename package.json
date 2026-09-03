@@ -6,11 +6,11 @@
   "type": "module",
   "packageManager": "pnpm@11.24.0",
   "engines": {
-    "node": ">=24",
+    "node": ">=22",
     "pnpm": ">=11"
   },
   "scripts": {
-    "preinstall": "node -e \"const ua=process.env.npm_config_user_agent||'';if(!ua.includes('pnpm')){console.error('This repo requires pnpm. See packageManager in package.json.');process.exit(1)}\"",
+    "preinstall": "node -e \"if(process.env.VERCEL||process.env.CI)process.exit(0);const ua=process.env.npm_config_user_agent||'';if(!ua.includes('pnpm')){console.error('This repo requires pnpm. See packageManager in package.json.');process.exit(1)}\"",
     "dev": "turbo run dev --filter=@bothy-board/web",
     "dev:portless": "portless",
     "build": "turbo run build && node scripts/sync-vercel-output.mjs",
@@ -29,15 +29,22 @@
     "audit": "pnpm audit --prod"
   },
   "dependencies": {
-    "pg": "catalog:"
+    "@tanstack/react-start": "^1.168.0",
+    "pg": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.10",
     "@e18e/cli": "^0.7.0",
+    "@tailwindcss/vite": "^4.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
     "knip": "^6.32.2",
+    "nitro": "3.0.260610-beta",
     "playwright": "^1.62.0",
     "portless": "0.15.5",
     "turbo": "^2.10.12",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vite": "catalog:"
   }
 }
