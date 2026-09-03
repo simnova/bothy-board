@@ -7,7 +7,7 @@
     }
   },
   "include": ["src", "server"],
-  "exclude": ["server/middleware/grok-pwa.ts"],
+  "exclude": ["server/middleware/grok-pwa.ts", "src/**/*.test.ts", "src/archunit-tests"],
   "references": [
     { "path": "../../packages/core" },
     { "path": "../../packages/db" },

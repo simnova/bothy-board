@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { BoardError } from "./errors.ts";
 import { assertFields, dumpFields, FIELD_TEMPLATES, slugKey, templateFields } from "./fields.ts";
-import { DEFAULT_SCOPE_IDS, GROK_TOOL_NAME_RE, canonicalToolName, PAT_SCOPES, scopeForTool } from "./scopes.ts";
+import {
+  BOTHY_MCP_TOOL_RE,
+  canonicalToolName,
+  DEFAULT_SCOPE_IDS,
+  GROK_TOOL_NAME_RE,
+  PAT_SCOPES,
+  scopeForTool,
+} from "./scopes.ts";
 
 const schema = templateFields("prj_test", "factory");
 
@@ -109,6 +116,7 @@ test("Grok tool names match ^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$", () => {
   for (const scope of PAT_SCOPES) {
     for (const tool of scope.tools) {
       assert.ok(GROK_TOOL_NAME_RE.test(tool), tool);
+      assert.ok(BOTHY_MCP_TOOL_RE.test(tool), tool);
       assert.ok(tool.length <= 64, `${tool} length ${tool.length}`);
     }
   }

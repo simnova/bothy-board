@@ -6,7 +6,7 @@ import type { CommentRow } from "./types";
 import { bumpRevision } from "./workspace";
 
 export function spawnCommand(sessionId: string, taskId: string): string {
-  return `grok -s ${sessionId} -w -p "Use BothyBoard MCP. Call bothy-board_sessions_bind with grokSessionId from GROK_SESSION_ID and taskId=${taskId}. Then bothy-board_tasks_get, execute the spec, and poll bothy-board_mailbox_poll_"`;
+  return `grok -s ${sessionId} -w -p "Use BothyBoard MCP. Call bothy-board_sessions_bind with grokSessionId from GROK_SESSION_ID and taskId=${taskId}. Then bothy-board_tasks_get, execute the spec, and poll bothy-board_mailbox_poll."`;
 }
 
 export function resumeCommand(sessionId: string, taskId: string): string {
@@ -108,7 +108,7 @@ export async function mintSession(
     affinityMachineName: machine || t.affinity_machine_name,
     spawnCommand: spawnCommand(sessionId, taskId),
     resumeCommand: resumeCommand(sessionId, taskId),
-    note: "Pass -s before spawn. Subagent IDs are assigned at spawn — bind them with bothy-board_sessions_bind_ Grok cannot message a running child; use the mailbox.",
+    note: "Pass -s before spawn. Subagent IDs are assigned at spawn — bind them with bothy-board_sessions_bind. Grok cannot message a running child; use the mailbox.",
     task,
   };
 }
@@ -240,7 +240,7 @@ export async function resumeSession(
       parkedOn: affinity.parkedOn,
       reason: affinity.reason,
       mailbox:
-        "Post bothy-board_mailbox_post / bothy-board_tasks_comment_ The worker on that machine should poll.",
+        "Post bothy-board_mailbox_post / bothy-board_tasks_comment. The worker on that machine should poll.",
       grokSessionId: task.grokSessionId,
       grokSubagentId: task.grokSubagentId,
     };

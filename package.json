@@ -21,6 +21,7 @@
     "typecheck": "turbo run typecheck",
     "check:auth": "node scripts/check-auth-invariant.mjs",
     "test": "turbo run test && node --test 'scripts/**/*.test.mjs'",
+    "test:arch": "turbo run test:arch --filter=@bothy-board/core --filter=@bothy-board/web",
     "lint": "biome check .",
     "format": "biome check --write .",
     "knip": "knip",

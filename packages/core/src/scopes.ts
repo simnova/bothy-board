@@ -1,6 +1,9 @@
 /** Grok / OpenAI tool names: letter-or-underscore, then [A-Za-z0-9_-], max 64. No dots. */
 export const GROK_TOOL_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$/;
 
+/** Advertised BothyBoard MCP tools: bothy-board + `_segment`s, no trailing `_`, no dots. */
+export const BOTHY_MCP_TOOL_RE = /^bothy-board(_[A-Za-z][A-Za-z0-9]*)+$/;
+
 /** Dots are a legacy alias. `bothy-board.tasks.next` → `bothy-board_tasks_next`. */
 export function canonicalToolName(name: string): string {
   return name.replaceAll(".", "_");
