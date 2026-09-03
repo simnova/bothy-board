@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { BoardError } from "./errors.ts";
 import { assertFields, dumpFields, FIELD_TEMPLATES, slugKey, templateFields } from "./fields.ts";
-import { DEFAULT_SCOPE_IDS, scopeForTool } from "./scopes.ts";
+import { DEFAULT_SCOPE_IDS, GROK_TOOL_NAME_RE, canonicalToolName, PAT_SCOPES, scopeForTool } from "./scopes.ts";
 
 const schema = templateFields("prj_test", "factory");
 
@@ -99,7 +99,20 @@ test("select rejects unknown option", () => {
 
 test("default worker PAT cannot rewrite field schema", () => {
   assert.equal(DEFAULT_SCOPE_IDS.includes("factory:plant"), false);
+  assert.equal(scopeForTool("bothy-board_projects_fields_set"), "factory:plant");
+  assert.equal(scopeForTool("bothy-board_projects_fields_applyTemplate"), "factory:plant");
+  assert.equal(scopeForTool("bothy-board_projects_create"), "factory:plant");
   assert.equal(scopeForTool("bothy-board.projects.fields.set"), "factory:plant");
-  assert.equal(scopeForTool("bothy-board.projects.fields.applyTemplate"), "factory:plant");
-  assert.equal(scopeForTool("bothy-board.projects.create"), "factory:plant");
+});
+
+test("Grok tool names match ^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$", () => {
+  for (const scope of PAT_SCOPES) {
+    for (const tool of scope.tools) {
+      assert.ok(GROK_TOOL_NAME_RE.test(tool), tool);
+      assert.ok(tool.length <= 64, `${tool} length ${tool.length}`);
+    }
+  }
+  assert.equal(canonicalToolName("bothy-board.tasks.next"), "bothy-board_tasks_next");
+  assert.equal(canonicalToolName("bothy-board_tasks_next"), "bothy-board_tasks_next");
+  assert.equal(GROK_TOOL_NAME_RE.test("bothy-board.tasks.next"), false);
 });

@@ -1,15 +1,23 @@
+/** Grok / OpenAI tool names: letter-or-underscore, then [A-Za-z0-9_-], max 64. No dots. */
+export const GROK_TOOL_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$/;
+
+/** Dots are a legacy alias. `bothy-board.tasks.next` → `bothy-board_tasks_next`. */
+export function canonicalToolName(name: string): string {
+  return name.replaceAll(".", "_");
+}
+
 export const PAT_SCOPES = [
   {
     id: "board:read",
     label: "Read board",
     hint: "Snapshot, ready queue, task detail, members",
     tools: [
-      "bothy-board.sync",
-      "bothy-board.tasks.next",
-      "bothy-board.tasks.get",
-      "bothy-board.team.members",
-      "bothy-board.projects.list",
-      "bothy-board.projects.fields.list",
+      "bothy-board_sync",
+      "bothy-board_tasks_next",
+      "bothy-board_tasks_get",
+      "bothy-board_team_members",
+      "bothy-board_projects_list",
+      "bothy-board_projects_fields_list",
     ],
   },
   {
@@ -17,13 +25,13 @@ export const PAT_SCOPES = [
     label: "Edit tasks",
     hint: "Create, claim, update, decompose, comment",
     tools: [
-      "bothy-board.tasks.create",
-      "bothy-board.tasks.update",
-      "bothy-board.tasks.claim",
-      "bothy-board.tasks.release",
-      "bothy-board.tasks.treatments.fail",
-      "bothy-board.tasks.decompose",
-      "bothy-board.tasks.comment",
+      "bothy-board_tasks_create",
+      "bothy-board_tasks_update",
+      "bothy-board_tasks_claim",
+      "bothy-board_tasks_release",
+      "bothy-board_tasks_treatments_fail",
+      "bothy-board_tasks_decompose",
+      "bothy-board_tasks_comment",
     ],
   },
   {
@@ -31,52 +39,52 @@ export const PAT_SCOPES = [
     label: "Plant cards",
     hint: "Owner: Idle → Planted, plus field schema. Not on default worker tokens.",
     tools: [
-      "bothy-board.tasks.plant",
-      "bothy-board.tasks.import",
-      "bothy-board.projects.create",
-      "bothy-board.projects.fields.set",
-      "bothy-board.projects.fields.applyTemplate",
+      "bothy-board_tasks_plant",
+      "bothy-board_tasks_import",
+      "bothy-board_projects_create",
+      "bothy-board_projects_fields_set",
+      "bothy-board_projects_fields_applyTemplate",
     ],
   },
   {
     id: "factory:land",
     label: "Land proofs",
     hint: "Orchestrator-only: proofs.set → Landed. Not on default worker tokens.",
-    tools: ["bothy-board.tasks.proofs.set"],
+    tools: ["bothy-board_tasks_proofs_set"],
   },
   {
     id: "sessions",
     label: "Grok sessions",
     hint: "Mint, bind, and resume continuation IDs",
     tools: [
-      "bothy-board.sessions.mint",
-      "bothy-board.sessions.bind",
-      "bothy-board.sessions.resume",
+      "bothy-board_sessions_mint",
+      "bothy-board_sessions_bind",
+      "bothy-board_sessions_resume",
     ],
   },
   {
     id: "mailbox",
     label: "Mailbox",
     hint: "Poll and post on a task thread",
-    tools: ["bothy-board.mailbox.poll", "bothy-board.mailbox.post"],
+    tools: ["bothy-board_mailbox_poll", "bothy-board_mailbox_post"],
   },
   {
     id: "worktrees",
     label: "Worktrees",
     hint: "Register branch/path/machine",
-    tools: ["bothy-board.worktrees.register"],
+    tools: ["bothy-board_worktrees_register"],
   },
   {
     id: "agents",
     label: "Agent heartbeat",
     hint: "Fleet presence",
-    tools: ["bothy-board.agents.heartbeat"],
+    tools: ["bothy-board_agents_heartbeat"],
   },
   {
     id: "tasks:delete",
     label: "Delete to trash",
     hint: "Soft-delete tasks (7-day recovery). Not granted by default.",
-    tools: ["bothy-board.tasks.delete", "bothy-board.tasks.restore", "bothy-board.trash.list"],
+    tools: ["bothy-board_tasks_delete", "bothy-board_tasks_restore", "bothy-board_trash_list"],
   },
 ] as const;
 
@@ -109,7 +117,7 @@ export function serializeScopes(scopes: string[]): string {
 }
 
 export function scopeForTool(toolName: string): PatScopeId | null {
-  return TOOL_TO_SCOPE.get(toolName) ?? null;
+  return TOOL_TO_SCOPE.get(canonicalToolName(toolName)) ?? null;
 }
 
 export function toolsForScopes(scopes: string[]): string[] {

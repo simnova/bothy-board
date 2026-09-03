@@ -30,10 +30,10 @@ BothyBoard is the shared logbook. Git remains origin and proof target. Grok sess
 
 ## Tools
 
-Orchestrator: `bothy-board.tasks.next` `sessions.mint` `sessions.bind` `worktrees.register` `tasks.proofs.set`
+Orchestrator: `bothy-board_tasks_next` `sessions.mint` `sessions.bind` `worktrees.register` `tasks.proofs.set`
 Worker: `tasks.get` `mailbox.poll` `mailbox.post` `agents.heartbeat` `tasks.update` `tasks.treatments.fail` `tasks.release`
 Owner: `tasks.create` `tasks.plant` `projects.fields.*` `tasks.decompose`
-Cache: `bothy-board.sync { cacheToken }` → `unchanged:true` means skip
+Cache: `bothy-board_sync { cacheToken }` → `unchanged:true` means skip
 
 ## Human UI
 

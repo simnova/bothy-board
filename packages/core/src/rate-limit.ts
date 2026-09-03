@@ -189,26 +189,27 @@ export function restKind(method: string, path: string): RateKind {
 
 export function mcpKind(rpcMethod: string, toolName = ""): RateKind {
   if (rpcMethod !== "tools/call") return "read";
+  toolName = toolName.replaceAll(".", "_");
   if (
-    toolName === "bothy-board.tasks.delete" ||
-    toolName === "bothy-board.tasks.restore" ||
-    toolName === "bothy-board.trash.list"
+    toolName === "bothy-board_tasks_delete" ||
+    toolName === "bothy-board_tasks_restore" ||
+    toolName === "bothy-board_trash_list"
   ) {
     return "destructive";
   }
   if (
-    toolName === "bothy-board.sessions.mint" ||
-    toolName === "bothy-board.sessions.resume" ||
-    toolName === "bothy-board.sessions.bind"
+    toolName === "bothy-board_sessions_mint" ||
+    toolName === "bothy-board_sessions_resume" ||
+    toolName === "bothy-board_sessions_bind"
   ) {
     return "expensive";
   }
   if (
-    toolName === "bothy-board.sync" ||
-    toolName === "bothy-board.tasks.next" ||
-    toolName === "bothy-board.tasks.get" ||
-    toolName === "bothy-board.team.members" ||
-    toolName === "bothy-board.mailbox.poll"
+    toolName === "bothy-board_sync" ||
+    toolName === "bothy-board_tasks_next" ||
+    toolName === "bothy-board_tasks_get" ||
+    toolName === "bothy-board_team_members" ||
+    toolName === "bothy-board_mailbox_poll"
   ) {
     return "read";
   }

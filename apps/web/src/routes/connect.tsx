@@ -48,7 +48,7 @@ function Connect() {
           jsonrpc: "2.0",
           id: 3,
           method: "tools/call",
-          params: { name: "bothy-board.sync", arguments: { cacheToken: token || undefined } },
+          params: { name: "bothy-board_sync", arguments: { cacheToken: token || undefined } },
         }),
       }).then((r) => r.json());
       const rest = await fetch("/api/v1/snapshot", {
@@ -149,7 +149,7 @@ curl -fsSL ${origin}/skills/bothy-board/SKILL.md \\
           <ul className="mt-3 space-y-2 text-sm leading-relaxed text-muted">
             <li>Every collection includes cacheToken and revision.</li>
             <li>Send If-None-Match or X-Bothy-Board-Cache-Token. Unchanged → HTTP 304.</li>
-            <li>MCP bothy-board.sync with the same token returns {"{ unchanged: true }"}.</li>
+            <li>MCP bothy-board_sync with the same token returns {"{ unchanged: true }"}.</li>
             <li>Keep the token on disk next to grokSessionId.</li>
           </ul>
         </article>

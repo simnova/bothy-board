@@ -216,7 +216,7 @@ POST /api/mcp
 Authorization: Bearer bb_pat_…
 
 { "method": "tools/call",
-  "params": { "name": "bothy-board.sync",
+  "params": { "name": "bothy-board_sync",
               "arguments": { "cacheToken": "bb-r42-…" } } }`}
           </pre>
           <div className="mt-6 grid gap-3 md:grid-cols-3">

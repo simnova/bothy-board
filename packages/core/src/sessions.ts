@@ -6,11 +6,11 @@ import type { CommentRow } from "./types";
 import { bumpRevision } from "./workspace";
 
 export function spawnCommand(sessionId: string, taskId: string): string {
-  return `grok -s ${sessionId} -w -p "Use BothyBoard MCP. Call bothy-board.sessions.bind with grokSessionId from GROK_SESSION_ID and taskId=${taskId}. Then bothy-board.tasks.get, execute the spec, and poll bothy-board.mailbox.poll."`;
+  return `grok -s ${sessionId} -w -p "Use BothyBoard MCP. Call bothy-board_sessions_bind with grokSessionId from GROK_SESSION_ID and taskId=${taskId}. Then bothy-board_tasks_get, execute the spec, and poll bothy-board_mailbox_poll_"`;
 }
 
 export function resumeCommand(sessionId: string, taskId: string): string {
-  return `grok --resume ${sessionId} -p "Read BothyBoard task ${taskId}. Poll bothy-board.mailbox.poll, address new comments, then continue."`;
+  return `grok --resume ${sessionId} -p "Read BothyBoard task ${taskId}. Poll bothy-board_mailbox_poll, address new comments, then continue."`;
 }
 
 export function resumeFromHint(subagentId: string): string {
@@ -62,7 +62,7 @@ export function checkAffinity(
   return {
     allowed: false,
     parkedOn: parked,
-    reason: `Session is parked on ${parked}. Resume only on that machine (Grok sessions are local to ~/.grok/sessions). Use bothy-board.mailbox.poll / comment to talk to the worker.`,
+    reason: `Session is parked on ${parked}. Resume only on that machine (Grok sessions are local to ~/.grok/sessions). Use bothy-board_mailbox_poll / comment to talk to the worker.`,
   };
 }
 
@@ -108,7 +108,7 @@ export async function mintSession(
     affinityMachineName: machine || t.affinity_machine_name,
     spawnCommand: spawnCommand(sessionId, taskId),
     resumeCommand: resumeCommand(sessionId, taskId),
-    note: "Pass -s before spawn. Subagent IDs are assigned at spawn — bind them with bothy-board.sessions.bind. Grok cannot message a running child; use the mailbox.",
+    note: "Pass -s before spawn. Subagent IDs are assigned at spawn — bind them with bothy-board_sessions_bind_ Grok cannot message a running child; use the mailbox.",
     task,
   };
 }
@@ -240,7 +240,7 @@ export async function resumeSession(
       parkedOn: affinity.parkedOn,
       reason: affinity.reason,
       mailbox:
-        "Post bothy-board.mailbox.post / bothy-board.tasks.comment. The worker on that machine should poll.",
+        "Post bothy-board_mailbox_post / bothy-board_tasks_comment_ The worker on that machine should poll.",
       grokSessionId: task.grokSessionId,
       grokSubagentId: task.grokSubagentId,
     };
@@ -248,7 +248,7 @@ export async function resumeSession(
   if (!task.grokSessionId) {
     return {
       allowed: false,
-      reason: "No grokSessionId on this task. Call bothy-board.sessions.mint first.",
+      reason: "No grokSessionId on this task. Call bothy-board_sessions_mint first.",
       parkedOn: null,
     };
   }

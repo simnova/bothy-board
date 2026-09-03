@@ -57,7 +57,7 @@ packages/ui       # Shared UI primitives
 packages/typescript-config
 ```
 
-MCP tools are `bothy-board.*`. Keys are `bb_live_` / `bb_pat_`.
+MCP tools are `bothy-board_*` (Grok-safe: `^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$`). Dotted names (`bothy-board.tasks.next`) still work as aliases. Keys are `bb_live_` / `bb_pat_`.
 
 ## License
 

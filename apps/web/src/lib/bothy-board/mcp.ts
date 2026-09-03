@@ -26,7 +26,7 @@ import {
   mcpKind,
   rateLimitedResponse,
 } from "@bothy-board/core/rate-limit";
-import { scopeForTool } from "@bothy-board/core/scopes";
+import { canonicalToolName, scopeForTool } from "@bothy-board/core/scopes";
 import {
   bindSession,
   mintSession,
@@ -84,7 +84,7 @@ async function readPublic(request: Request, path: string): Promise<string> {
 
 const TOOLS = [
   {
-    name: "bothy-board.sync",
+    name: "bothy-board_sync",
     description: "Compact workspace snapshot. Pass cacheToken to skip unchanged payloads.",
     inputSchema: {
       type: "object",
@@ -92,7 +92,7 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.tasks.next",
+    name: "bothy-board_tasks_next",
     description:
       "Next Planted+ready leaf whose write_roots do not overlap in-flight work. Pass machineName (mints spawnCommand) and cacheToken. { task:null } and unchanged:true are success. Run spawnCommand — do not invent grok -p.",
     inputSchema: {
@@ -104,7 +104,7 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.tasks.get",
+    name: "bothy-board_tasks_get",
     description:
       "Full task with comments, children, grokSessionId, grokSubagentId, affinity, worktree.",
     inputSchema: {
@@ -114,7 +114,7 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.tasks.create",
+    name: "bothy-board_tasks_create",
     description:
       "Create an Idle+backlog card. Requires title + objective (body ## objective or objective field). Title-only is refused. Does not Plant.",
     inputSchema: {
@@ -147,7 +147,7 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.sessions.mint",
+    name: "bothy-board_sessions_mint",
     description:
       "Mint a Grok Build session UUID onto a task BEFORE spawn. Returns spawnCommand (grok -s <uuid> -w). Idempotent if already minted.",
     inputSchema: {
@@ -160,7 +160,7 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.sessions.bind",
+    name: "bothy-board_sessions_bind",
     description:
       "Bind GROK_SESSION_ID (and optional grokSubagentId) to a task after spawn. Call from the worker; pass the env session id.",
     inputSchema: {
@@ -178,7 +178,7 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.sessions.resume",
+    name: "bothy-board_sessions_resume",
     description:
       "Check whether THIS machine may resume a parked Grok session. Returns resumeCommand / resume_from hint, or parkedOn if affinity fails.",
     inputSchema: {
@@ -192,7 +192,7 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.mailbox.poll",
+    name: "bothy-board_mailbox_poll",
     description:
       "Agent-to-agent mailbox for a task. Pass since (ISO timestamp from last poll) to get only new comments. Use this instead of prompting a running Grok subagent.",
     inputSchema: {
@@ -202,7 +202,7 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.mailbox.post",
+    name: "bothy-board_mailbox_post",
     description: "Post a steering note. Capped at 4000 chars. Other agents see it on mailbox.poll.",
     inputSchema: {
       type: "object",
@@ -216,7 +216,7 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.tasks.claim",
+    name: "bothy-board_tasks_claim",
     description:
       "CAS claim: Planted+ready+unassigned. Second claim returns already_claimed. Prefer mint then spawn then bind (bind auto-claims).",
     inputSchema: {
@@ -235,7 +235,7 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.tasks.release",
+    name: "bothy-board_tasks_release",
     description:
       "Hand back a claimed/in_progress lease to Planted+ready without waiting for heartbeat TTL.",
     inputSchema: {
@@ -245,7 +245,7 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.tasks.treatments.fail",
+    name: "bothy-board_tasks_treatments_fail",
     description:
       "Append-only memory: a treatment that did not work. Next workers read this instead of rediscovering it.",
     inputSchema: {
@@ -259,7 +259,7 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.tasks.update",
+    name: "bothy-board_tasks_update",
     description:
       "Patch. Workers may set review/blocked. They cannot set done, Planted, Landed, or Graded.",
     inputSchema: {
@@ -281,7 +281,7 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.tasks.decompose",
+    name: "bothy-board_tasks_decompose",
     description:
       "Split into children. Parent becomes a container (not in next). Children do NOT depend on the parent; they stay Idle+backlog until planted themselves.",
     inputSchema: {
@@ -300,7 +300,7 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.tasks.plant",
+    name: "bothy-board_tasks_plant",
     description:
       "Owner/PAT with factory:plant: Idle → Planted+ready after TREE done_when validates. Does not auto-plant on create.",
     inputSchema: {
@@ -310,7 +310,7 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.tasks.import",
+    name: "bothy-board_tasks_import",
     description:
       "Owner/factory:plant: batch-create Idle cards from {title,body,fields,priority}. Fail-closed per card. Does not Plant. Cap 200.",
     inputSchema: {
@@ -339,7 +339,7 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.tasks.proofs.set",
+    name: "bothy-board_tasks_proofs_set",
     description:
       "Attestation after the consumer re-ran TREE proofs (exists:/run:/changed:/…). BothyBoard does not execute those commands. proofsOk+headSha → factory=Landed, status=integrating. Requires factory:land. Workers cannot Landed.",
     inputSchema: {
@@ -360,7 +360,7 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.tasks.comment",
+    name: "bothy-board_tasks_comment",
     description:
       "Audit-log note. Mid-run steer is mailbox.post / mailbox.poll — comments are not the contract and do not reach a running child.",
     inputSchema: {
@@ -375,7 +375,7 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.agents.heartbeat",
+    name: "bothy-board_agents_heartbeat",
     description:
       "Register or resume an agent. Pass grokSessionId from GROK_SESSION_ID. Call every few minutes.",
     inputSchema: {
@@ -394,7 +394,7 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.worktrees.register",
+    name: "bothy-board_worktrees_register",
     description: "Register a git worktree/branch/machine so other agents avoid that checkout.",
     inputSchema: {
       type: "object",
@@ -410,17 +410,17 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.team.members",
+    name: "bothy-board_team_members",
     description: "List human teammates on this workspace (handle + role).",
     inputSchema: { type: "object", properties: {} },
   },
   {
-    name: "bothy-board.projects.list",
+    name: "bothy-board_projects_list",
     description: "List projects this credential can see.",
     inputSchema: { type: "object", properties: {} },
   },
   {
-    name: "bothy-board.projects.create",
+    name: "bothy-board_projects_create",
     description: "Create a project on this workspace. Owner only.",
     inputSchema: {
       type: "object",
@@ -429,7 +429,7 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.projects.fields.list",
+    name: "bothy-board_projects_fields_list",
     description: "List configurable fields on a project (GitHub Projects-style schema).",
     inputSchema: {
       type: "object",
@@ -438,7 +438,7 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.projects.fields.set",
+    name: "bothy-board_projects_fields_set",
     description: "Replace the field schema for a project. Owner only.",
     inputSchema: {
       type: "object",
@@ -450,7 +450,7 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.projects.fields.applyTemplate",
+    name: "bothy-board_projects_fields_applyTemplate",
     description:
       "Apply a named field template. Currently: factory (step/lane/unblocks + clothing body gate).",
     inputSchema: {
@@ -463,7 +463,7 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.tasks.delete",
+    name: "bothy-board_tasks_delete",
     description:
       "Soft-delete a task (hidden, recoverable for 7 days). Requires tasks:delete. Cannot wipe the board — tight per-agent quota.",
     inputSchema: {
@@ -473,7 +473,7 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.tasks.restore",
+    name: "bothy-board_tasks_restore",
     description: "Restore a soft-deleted task from trash.",
     inputSchema: {
       type: "object",
@@ -482,7 +482,7 @@ const TOOLS = [
     },
   },
   {
-    name: "bothy-board.trash.list",
+    name: "bothy-board_trash_list",
     description: "List tasks and projects in trash and when they purge.",
     inputSchema: { type: "object", properties: {} },
   },
@@ -508,7 +508,7 @@ function str(args: Record<string, unknown>, key: string): string | undefined {
 }
 
 function writerFor(actor: Actor, name: string): WriterKind {
-  if (name === "bothy-board.tasks.proofs.set") return "orchestrator";
+  if (canonicalToolName(name) === "bothy-board_tasks_proofs_set") return "orchestrator";
   if (actor.type === "agent") return "agent";
   if (
     actor.type === "pat" &&
@@ -526,6 +526,7 @@ async function callTool(
   args: Record<string, unknown>,
   grokSessionHeader?: string,
 ) {
+  name = canonicalToolName(name);
   const workspaceId = actor.workspaceId;
   const workspaceName = actor.workspaceName;
   const revision = actor.revision;
@@ -535,15 +536,15 @@ async function callTool(
   const taskId = str(args, "taskId");
   if (
     taskId &&
-    name !== "bothy-board.sync" &&
-    name !== "bothy-board.tasks.next" &&
-    name !== "bothy-board.tasks.create" &&
-    name !== "bothy-board.tasks.import"
+    name !== "bothy-board_sync" &&
+    name !== "bothy-board_tasks_next" &&
+    name !== "bothy-board_tasks_create" &&
+    name !== "bothy-board_tasks_import"
   ) {
     await assertTaskAccess(actor, workspaceId, taskId);
   }
   switch (name) {
-    case "bothy-board.sync": {
+    case "bothy-board_sync": {
       const snap = await loadSnapshot(workspaceId, workspaceName, revision, filter);
       const cacheToken = str(args, "cacheToken");
       if (cacheToken && cacheToken === snap.cacheToken) {
@@ -565,7 +566,7 @@ async function callTool(
         members: snap.members,
       });
     }
-    case "bothy-board.tasks.next": {
+    case "bothy-board_tasks_next": {
       const next = await nextReady(workspaceId, filter, {
         machineName: str(args, "machineName"),
         cacheToken: str(args, "cacheToken"),
@@ -578,9 +579,9 @@ async function callTool(
         unchanged: next.unchanged,
       });
     }
-    case "bothy-board.tasks.get":
+    case "bothy-board_tasks_get":
       return toolResult({ task: await getTaskDetail(workspaceId, taskId ?? "") });
-    case "bothy-board.tasks.create": {
+    case "bothy-board_tasks_create": {
       const projectId = await resolveWriteProject(actor, workspaceId, str(args, "projectId"));
       return toolResult({
         id: await createTask(workspaceId, {
@@ -609,14 +610,14 @@ async function callTool(
         }),
       });
     }
-    case "bothy-board.sessions.mint": {
+    case "bothy-board_sessions_mint": {
       const minted = await mintSession(workspaceId, taskId ?? "", {
         machineName: str(args, "machineName") ?? "",
         userId,
       });
       return toolResult(minted ?? { error: "task not found" }, !minted);
     }
-    case "bothy-board.sessions.bind":
+    case "bothy-board_sessions_bind":
       return toolResult(
         await bindSession(workspaceId, {
           grokSessionId: sessionFromEnv ?? "",
@@ -629,7 +630,7 @@ async function callTool(
           userId,
         }),
       );
-    case "bothy-board.sessions.resume":
+    case "bothy-board_sessions_resume":
       return toolResult(
         await resumeSession(workspaceId, {
           taskId: taskId ?? "",
@@ -638,9 +639,9 @@ async function callTool(
           userId,
         }),
       );
-    case "bothy-board.mailbox.poll":
+    case "bothy-board_mailbox_poll":
       return toolResult(await pollMailbox(workspaceId, taskId ?? "", str(args, "since")));
-    case "bothy-board.mailbox.post":
+    case "bothy-board_mailbox_post":
       return toolResult(
         await postMailbox(workspaceId, taskId ?? "", {
           body: str(args, "body") ?? "",
@@ -651,7 +652,7 @@ async function callTool(
           grokSessionId: sessionFromEnv,
         }),
       );
-    case "bothy-board.tasks.claim":
+    case "bothy-board_tasks_claim":
       return toolResult(
         await claimTask(workspaceId, taskId ?? "", {
           id: str(args, "agentId"),
@@ -663,18 +664,18 @@ async function callTool(
           grokSubagentId: str(args, "grokSubagentId"),
         }),
       );
-    case "bothy-board.tasks.release":
+    case "bothy-board_tasks_release":
       return toolResult({
         task: await releaseTask(workspaceId, taskId ?? "", str(args, "agentId")),
       });
-    case "bothy-board.tasks.treatments.fail":
+    case "bothy-board_tasks_treatments_fail":
       return toolResult({
         task: await failTreatment(workspaceId, taskId ?? "", {
           name: str(args, "name") ?? "",
           produced: str(args, "produced") ?? "",
         }),
       });
-    case "bothy-board.tasks.update":
+    case "bothy-board_tasks_update":
       return toolResult({
         task: await updateTask(workspaceId, taskId ?? "", {
           status: args["status"] as TaskStatus | undefined,
@@ -693,9 +694,9 @@ async function callTool(
               : undefined,
         }),
       });
-    case "bothy-board.tasks.plant":
+    case "bothy-board_tasks_plant":
       return toolResult({ task: await plantTask(workspaceId, taskId ?? "") });
-    case "bothy-board.tasks.import": {
+    case "bothy-board_tasks_import": {
       const projectId = await resolveWriteProject(actor, workspaceId, str(args, "projectId"));
       const raw = Array.isArray(args["cards"]) ? args["cards"] : [];
       const cards = raw.map((c) => {
@@ -716,7 +717,7 @@ async function callTool(
       });
       return toolResult(await importTasks(workspaceId, projectId, cards));
     }
-    case "bothy-board.tasks.proofs.set":
+    case "bothy-board_tasks_proofs_set":
       return toolResult({
         task: await setProofs(workspaceId, {
           taskId: taskId ?? "",
@@ -729,22 +730,22 @@ async function callTool(
             : undefined,
         }),
       });
-    case "bothy-board.tasks.delete": {
+    case "bothy-board_tasks_delete": {
       const { assertCanDeleteTasks, softDeleteTask } = await import("@bothy-board/core/trash");
       assertCanDeleteTasks(actor);
       return toolResult(await softDeleteTask(workspaceId, taskId ?? "", actor));
     }
-    case "bothy-board.tasks.restore": {
+    case "bothy-board_tasks_restore": {
       const { assertCanDeleteTasks, restoreTask } = await import("@bothy-board/core/trash");
       assertCanDeleteTasks(actor);
       return toolResult(await restoreTask(workspaceId, taskId ?? "", actor));
     }
-    case "bothy-board.trash.list": {
+    case "bothy-board_trash_list": {
       const { assertCanDeleteTasks, listTrash } = await import("@bothy-board/core/trash");
       assertCanDeleteTasks(actor);
       return toolResult({ items: await listTrash(workspaceId) });
     }
-    case "bothy-board.tasks.decompose":
+    case "bothy-board_tasks_decompose":
       return toolResult({
         ids: await decomposeTask(
           workspaceId,
@@ -755,7 +756,7 @@ async function callTool(
           }),
         ),
       });
-    case "bothy-board.tasks.comment":
+    case "bothy-board_tasks_comment":
       return toolResult({
         id: await addComment(workspaceId, taskId ?? "", {
           authorKind: actor.type === "agent" ? "agent" : "user",
@@ -766,7 +767,7 @@ async function callTool(
           grokSessionId: sessionFromEnv,
         }),
       });
-    case "bothy-board.agents.heartbeat":
+    case "bothy-board_agents_heartbeat":
       if (str(args, "currentTaskId"))
         await assertTaskAccess(actor, workspaceId, str(args, "currentTaskId") ?? "");
       return toolResult(
@@ -780,7 +781,7 @@ async function callTool(
           currentTaskId: str(args, "currentTaskId") ?? null,
         }),
       );
-    case "bothy-board.worktrees.register":
+    case "bothy-board_worktrees_register":
       if (!str(args, "taskId")) throw new Error("taskId required");
       await assertTaskAccess(actor, workspaceId, str(args, "taskId") ?? "");
       return toolResult({
@@ -792,9 +793,9 @@ async function callTool(
           taskId: str(args, "taskId"),
         }),
       });
-    case "bothy-board.team.members":
+    case "bothy-board_team_members":
       return toolResult({ members: await listMembers(workspaceId, filter) });
-    case "bothy-board.projects.list": {
+    case "bothy-board_projects_list": {
       const { listUserProjects } = await import("@bothy-board/core/projects");
       const listed = userId
         ? await listUserProjects(workspaceId, userId)
@@ -806,7 +807,7 @@ async function callTool(
       const projects = filter ? listed.filter((p) => filter.includes(p.id)) : listed;
       return toolResult({ projects });
     }
-    case "bothy-board.projects.create": {
+    case "bothy-board_projects_create": {
       if (!userId) throw new Error("Only a signed-in owner can create a project.");
       const { createProject } = await import("@bothy-board/core/projects");
       const repo = str(args, "repo");
@@ -818,14 +819,14 @@ async function callTool(
         ),
       );
     }
-    case "bothy-board.projects.fields.list": {
+    case "bothy-board_projects_fields_list": {
       const projectId = str(args, "projectId") ?? "";
       if (filter && !filter.includes(projectId))
         throw new Error("This token is not scoped to that project.");
       const { listProjectFields } = await import("@bothy-board/core/project-fields");
       return toolResult({ fields: await listProjectFields(projectId) });
     }
-    case "bothy-board.projects.fields.set": {
+    case "bothy-board_projects_fields_set": {
       if (!userId) throw new Error("Only a signed-in owner can edit fields.");
       const { replaceProjectFields } = await import("@bothy-board/core/project-fields");
       const raw = Array.isArray(args["fields"]) ? args["fields"] : [];
@@ -838,7 +839,7 @@ async function callTool(
         ),
       });
     }
-    case "bothy-board.projects.fields.applyTemplate": {
+    case "bothy-board_projects_fields_applyTemplate": {
       if (!userId) throw new Error("Only a signed-in owner can edit fields.");
       const { applyFieldTemplate } = await import("@bothy-board/core/project-fields");
       return toolResult({
@@ -900,7 +901,7 @@ export async function handleMcp(request: Request): Promise<Response> {
         ok(id, {
           protocolVersion: PROTOCOL,
           capabilities: { tools: { listChanged: false }, resources: { listChanged: false } },
-          serverInfo: { name: "bothy-board", version: "0.5.0" },
+          serverInfo: { name: "bothy-board", version: "0.5.1" },
           instructions: INSTRUCTIONS,
         }),
         200,
@@ -936,9 +937,9 @@ export async function handleMcp(request: Request): Promise<Response> {
         const scope = scopeForTool(t.name);
         if (scope && !hasScope(actor, scope)) return false;
         if (
-          t.name === "bothy-board.tasks.delete" ||
-          t.name === "bothy-board.tasks.restore" ||
-          t.name === "bothy-board.trash.list"
+          t.name === "bothy-board_tasks_delete" ||
+          t.name === "bothy-board_tasks_restore" ||
+          t.name === "bothy-board_trash_list"
         ) {
           return actor.type === "user" || (actor.type === "pat" && hasScope(actor, "tasks:delete"));
         }
