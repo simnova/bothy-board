@@ -211,3 +211,47 @@ export function dequeueIds<
     })
     .map((t) => t.id);
 }
+
+/** One winner per project (that project's cap), then affinity / priority / id. */
+export function pickDequeueId<
+  T extends {
+    id: string;
+    status: TaskStatus;
+    factory: FactoryState;
+    priority: number;
+    depIds: string[];
+    childCount: number;
+    affinityMachineName?: string | null;
+    writeRoots?: string[];
+    projectId?: string;
+  },
+>(
+  tasks: T[],
+  projects: { id: string; maxInFlight?: number | undefined }[],
+  opts?: { machineName?: string | null | undefined },
+): string | undefined {
+  const machine = opts?.machineName?.trim() || "";
+  const caps = new Map(projects.map((p) => [p.id, p.maxInFlight]));
+  const groups = new Map<string, T[]>();
+  for (const task of tasks) {
+    const key = task.projectId ?? "";
+    const list = groups.get(key) ?? [];
+    list.push(task);
+    groups.set(key, list);
+  }
+  const winners: T[] = [];
+  for (const [projectId, subset] of groups) {
+    const id = dequeueIds(subset, { machineName: machine, maxInFlight: caps.get(projectId) })[0];
+    const task = id ? subset.find((row) => row.id === id) : undefined;
+    if (task) winners.push(task);
+  }
+  winners.sort((a, b) => {
+    if (machine) {
+      const ah = a.affinityMachineName === machine ? 0 : 1;
+      const bh = b.affinityMachineName === machine ? 0 : 1;
+      if (ah !== bh) return ah - bh;
+    }
+    return a.priority - b.priority || a.id.localeCompare(b.id);
+  });
+  return winners[0]?.id;
+}

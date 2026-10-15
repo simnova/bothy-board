@@ -140,7 +140,7 @@
   "scripts": {
     "typecheck": "tsc --build --pretty",
     "build": "tsc --build --pretty",
-    "test": "node --experimental-strip-types --test src/card.test.ts src/factory.test.ts src/fields.test.ts src/archunit-tests/mcp-naming.test.ts",
+    "test": "node --experimental-strip-types --test src/card.test.ts src/factory.test.ts src/fields.test.ts src/scope.test.ts src/archunit-tests/mcp-naming.test.ts",
     "test:arch": "node --experimental-strip-types --test src/archunit-tests/mcp-naming.test.ts"
   },
   "dependencies": {

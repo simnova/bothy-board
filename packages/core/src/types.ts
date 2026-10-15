@@ -82,6 +82,7 @@ export type CommentRow = {
   taskId: string;
   authorKind: "user" | "agent";
   authorName: string;
+  authorAgentId?: string | null;
   body: string;
   grokSessionId?: string | null;
   createdAt: string;

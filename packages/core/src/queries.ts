@@ -13,6 +13,7 @@ import {
   MAX_INTEGRATING_PER_PROJECT,
   parseFactory,
   parsePriority,
+  pickDequeueId,
   SNAPSHOT_TASK_CAP,
   type WriterKind,
   writeRootsOverlap,
@@ -376,6 +377,7 @@ export async function getTaskDetail(
     select depends_on_id from task_deps where workspace_id = ${workspaceId} and task_id = ${taskId}`;
   const comments = await sql<CommentRow>`
     select id, task_id as "taskId", author_kind as "authorKind", author_name as "authorName",
+      author_agent_id as "authorAgentId",
       body, grok_session_id as "grokSessionId", created_at as "createdAt"
     from comments where workspace_id = ${workspaceId} and task_id = ${taskId}
     order by created_at asc`;
@@ -1253,11 +1255,9 @@ export async function nextReady(
   if (opts?.cacheToken && opts.cacheToken === snap.cacheToken) {
     return { ...empty, cacheToken: snap.cacheToken, unchanged: true };
   }
-  const cap = snap.project.maxInFlight;
-  const id = dequeueIds(snap.tasks, {
+  const id = pickDequeueId(snap.tasks, snap.projects, {
     machineName: opts?.machineName ?? null,
-    maxInFlight: cap,
-  })[0];
+  });
   let task = id ? (snap.tasks.find((t) => t.id === id) ?? null) : null;
   if (!task) {
     return { ...empty, cacheToken: snap.cacheToken };

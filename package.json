@@ -30,7 +30,7 @@
     "audit": "pnpm audit --prod"
   },
   "dependencies": {
-    "@tanstack/react-start": "^1.168.0",
+    "@tanstack/react-start": "~1.168.60",
     "pg": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:"

@@ -1,6 +1,7 @@
 import { getSql, type Sql } from "@bothy-board/db";
 import { assertMailboxBody } from "./factory";
 import { makeId, makeUuid } from "./ids";
+import { type MailboxPollOpts, visibleMailboxComments } from "./mailbox";
 import { claimTask, getTaskDetail, heartbeat } from "./queries";
 import type { CommentRow } from "./types";
 import { bumpRevision } from "./workspace";
@@ -264,37 +265,72 @@ export async function resumeSession(
   };
 }
 
+export type { MailboxPollOpts } from "./mailbox";
+export { visibleMailboxComments } from "./mailbox";
+
+const COMMENT_SQL = `id,
+  task_id as "taskId",
+  author_kind as "authorKind",
+  author_name as "authorName",
+  author_agent_id as "authorAgentId",
+  body,
+  grok_session_id as "grokSessionId",
+  created_at as "createdAt"`;
+
+function pollOpts(sinceOrOpts?: string | MailboxPollOpts): MailboxPollOpts {
+  if (!sinceOrOpts) return {};
+  if (typeof sinceOrOpts === "string") return { since: sinceOrOpts };
+  return sinceOrOpts;
+}
+
 export async function pollMailbox(
   workspaceId: string,
   taskId: string,
-  since?: string,
+  sinceOrOpts?: string | MailboxPollOpts,
 ): Promise<{ taskId: string; comments: CommentRow[]; nextSince: string; unread: number }> {
+  const opts = pollOpts(sinceOrOpts);
   const sql = await getSql();
-  const comments = since
-    ? await sql<CommentRow>`
-        select id,
-          task_id as "taskId",
-          author_kind as "authorKind",
-          author_name as "authorName",
-          body,
-          grok_session_id as "grokSessionId",
-          created_at as "createdAt"
-        from comments
-        where workspace_id = ${workspaceId} and task_id = ${taskId} and created_at > ${since}
-        order by created_at asc`
-    : await sql<CommentRow>`
-        select id,
-          task_id as "taskId",
-          author_kind as "authorKind",
-          author_name as "authorName",
-          body,
-          grok_session_id as "grokSessionId",
-          created_at as "createdAt"
-        from comments
-        where workspace_id = ${workspaceId} and task_id = ${taskId}
-        order by created_at asc`;
-  const last = comments.at(-1)?.createdAt ?? since ?? new Date().toISOString();
-  return { taskId, comments, nextSince: last, unread: comments.length };
+  const params: unknown[] = [workspaceId, taskId];
+  let where = "workspace_id = $1 and task_id = $2";
+  if (opts.since) {
+    params.push(opts.since);
+    where += " and created_at > $3";
+  }
+  const comments = await sql.query<CommentRow>(
+    `select ${COMMENT_SQL} from comments where ${where} order by created_at asc`,
+    params,
+  );
+  const visible = visibleMailboxComments(comments, opts);
+  const last = comments.at(-1)?.createdAt ?? opts.since ?? new Date().toISOString();
+  return { taskId, comments: visible, nextSince: last, unread: visible.length };
+}
+
+export const MAILBOX_POLL_CAP = 16;
+
+export async function pollMailboxes(
+  workspaceId: string,
+  taskIds: string[],
+  opts?: MailboxPollOpts & { sinceByTaskId?: Record<string, string> | undefined },
+): Promise<{
+  threads: { taskId: string; comments: CommentRow[]; nextSince: string; unread: number }[];
+  comments: CommentRow[];
+  truncated: boolean;
+}> {
+  const unique = [...new Set(taskIds.filter((id) => id.trim()))];
+  const truncated = unique.length > MAILBOX_POLL_CAP;
+  const ids = unique.slice(0, MAILBOX_POLL_CAP);
+  const threads = [];
+  for (const taskId of ids) {
+    const since = opts?.sinceByTaskId?.[taskId] ?? opts?.since;
+    threads.push(
+      await pollMailbox(workspaceId, taskId, {
+        since,
+        excludeGrokSessionId: opts?.excludeGrokSessionId,
+        excludeAuthorAgentId: opts?.excludeAuthorAgentId,
+      }),
+    );
+  }
+  return { threads, comments: threads.flatMap((thread) => thread.comments), truncated };
 }
 
 export async function postMailbox(

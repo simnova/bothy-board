@@ -253,7 +253,13 @@ export async function handleRest(request: Request): Promise<Response> {
       const blocked = deny("mailbox");
       if (blocked) return blocked;
       const since = url.searchParams.get("since") ?? undefined;
-      return json(await pollMailbox(ws, taskId, since), 200, request);
+      const excludeGrokSessionId = url.searchParams.get("excludeGrokSessionId") ?? undefined;
+      const excludeAuthorAgentId = url.searchParams.get("excludeAuthorAgentId") ?? undefined;
+      return json(
+        await pollMailbox(ws, taskId, { since, excludeGrokSessionId, excludeAuthorAgentId }),
+        200,
+        request,
+      );
     }
     if (parts[0] === "tasks" && taskId && parts[2] === "mailbox" && method === "POST") {
       const blocked = deny("mailbox");

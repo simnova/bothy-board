@@ -1,4 +1,5 @@
 import { assertTaskAccess, resolveWriteProject } from "@bothy-board/core/access";
+import { resolveProjectScope } from "@bothy-board/core/actor";
 import { isBoardError } from "@bothy-board/core/errors";
 import type { WriterKind } from "@bothy-board/core/factory";
 import { corsHeaders, json } from "@bothy-board/core/http";
@@ -31,6 +32,7 @@ import {
   bindSession,
   mintSession,
   pollMailbox,
+  pollMailboxes,
   postMailbox,
   resumeSession,
 } from "@bothy-board/core/sessions";
@@ -52,9 +54,9 @@ const INSTRUCTIONS = `BothyBoard is the shared shelter — a logbook for humans 
 Install the skill: GET /skills/bothy-board/SKILL.md → .grok/skills/bothy-board/SKILL.md
 Discovery: GET /api/mcp (no auth), /llms.txt, /mcp.json. Resource bothy://skill is the same markdown.
 
-Orchestrator: tasks.next { machineName, cacheToken } returns spawnCommand — run that, do not invent grok -p. {task:null} and unchanged:true are success. Land only via tasks.proofs.set (attestation). Workers set review, never done.
+Orchestrator: tasks.next { projectId, machineName, cacheToken } returns spawnCommand — run that, do not invent grok -p. {task:null} and unchanged:true are success. A token that sees several projects must pass projectId. Land only via tasks.proofs.set (attestation). Workers set review, never done. review holds write_roots until land; the heartbeat TTL does not clear it.
 
-Worker: bind GROK_SESSION_ID, tasks.get, mailbox.poll {since} (the only mid-run steer — comments are an audit log), heartbeat. Dead end: treatments.fail. Cannot continue: tasks.release.
+Worker: bind GROK_SESSION_ID, tasks.get, mailbox.poll { taskId or taskIds, since, excludeGrokSessionId } (the only mid-run steer — comments are an audit log). Do not filter on authorName. heartbeat. Dead end: treatments.fail. Cannot continue: tasks.release. JSON-RPC batching is not supported.
 
 Owner plants with tasks.plant after TREE done_when. Create refuses title-only. tasks.import is Idle-only, no auto-plant.`;
 
@@ -85,19 +87,21 @@ async function readPublic(request: Request, path: string): Promise<string> {
 const TOOLS = [
   {
     name: "bothy-board_sync",
-    description: "Compact workspace snapshot. Pass cacheToken to skip unchanged payloads.",
+    description:
+      "Compact workspace snapshot. Pass projectId when the PAT can see more than one project — an unscoped read is not a roster. Pass cacheToken to skip unchanged payloads.",
     inputSchema: {
       type: "object",
-      properties: { cacheToken: { type: "string" } },
+      properties: { projectId: { type: "string" }, cacheToken: { type: "string" } },
     },
   },
   {
     name: "bothy-board_tasks_next",
     description:
-      "Next Planted+ready leaf whose write_roots do not overlap in-flight work. Pass machineName (mints spawnCommand) and cacheToken. { task:null } and unchanged:true are success. Run spawnCommand — do not invent grok -p.",
+      "Next Planted+ready leaf in one project whose write_roots do not overlap in-flight work. Pass projectId when the PAT sees more than one project. Pass machineName (mints spawnCommand) and cacheToken. { task:null } and unchanged:true are success. Run spawnCommand — do not invent grok -p. Not a monitor.",
     inputSchema: {
       type: "object",
       properties: {
+        projectId: { type: "string" },
         machineName: { type: "string" },
         cacheToken: { type: "string" },
       },
@@ -116,7 +120,7 @@ const TOOLS = [
   {
     name: "bothy-board_tasks_create",
     description:
-      "Create an Idle+backlog card. Requires title + objective (body ## objective or objective field). Title-only is refused. Does not Plant.",
+      "Create an Idle+backlog card. Requires title + objective. Title-only is refused. Does not Plant. Project fields go in fields — a sibling key is ignored, and a refusal does not say which object the key belongs on. List the schema with projects.fields.list first.",
     inputSchema: {
       type: "object",
       properties: {
@@ -194,22 +198,31 @@ const TOOLS = [
   {
     name: "bothy-board_mailbox_poll",
     description:
-      "Agent-to-agent mailbox for a task. Pass since (ISO timestamp from last poll) to get only new comments. Use this instead of prompting a running Grok subagent.",
+      "Agent-to-agent mailbox. Pass since (ISO, newest createdAt already seen) or you redownload the thread. taskIds (max 16) polls several cards in one call. Comments include authorAgentId and grokSessionId. Pass excludeGrokSessionId / excludeAuthorAgentId — do not filter on authorName. The caller's X-Grok-Session-Id is excluded unless includeSelf is true. nextSince advances past excluded notes.",
     inputSchema: {
       type: "object",
-      properties: { taskId: { type: "string" }, since: { type: "string" } },
-      required: ["taskId"],
+      properties: {
+        taskId: { type: "string" },
+        taskIds: { type: "array", items: { type: "string" }, maxItems: 16 },
+        since: { type: "string" },
+        sinceByTaskId: { type: "object", additionalProperties: { type: "string" } },
+        excludeGrokSessionId: { type: "string" },
+        excludeAuthorAgentId: { type: "string" },
+        includeSelf: { type: "boolean" },
+      },
     },
   },
   {
     name: "bothy-board_mailbox_post",
-    description: "Post a steering note. Capped at 4000 chars. Other agents see it on mailbox.poll.",
+    description:
+      "Post a steering note. Capped at 4000 chars. Other agents see it on mailbox.poll. Pass grokSessionId so they can exclude the echo.",
     inputSchema: {
       type: "object",
       properties: {
         taskId: { type: "string" },
         body: { type: "string" },
         authorName: { type: "string" },
+        authorAgentId: { type: "string" },
         grokSessionId: { type: "string" },
       },
       required: ["taskId", "body"],
@@ -237,7 +250,7 @@ const TOOLS = [
   {
     name: "bothy-board_tasks_release",
     description:
-      "Hand back a claimed/in_progress lease to Planted+ready without waiting for heartbeat TTL.",
+      "Hand back a claimed/in_progress lease to Planted+ready. Does not clear review — review holds write_roots until proofs.set, and the heartbeat TTL does not reap it.",
     inputSchema: {
       type: "object",
       properties: { taskId: { type: "string" }, agentId: { type: "string" } },
@@ -545,34 +558,64 @@ async function callTool(
   }
   switch (name) {
     case "bothy-board_sync": {
-      const snap = await loadSnapshot(workspaceId, workspaceName, revision, filter);
+      const scope = resolveProjectScope(str(args, "projectId"), filter);
+      if (!scope.ok) {
+        if (scope.code === "project_forbidden") {
+          return toolResult({ error: scope.message, code: scope.code }, true);
+        }
+        return toolResult({
+          scoped: false,
+          projects: scope.projects,
+          tasks: [],
+          agents: [],
+          worktrees: [],
+          readyIds: [],
+          hint: scope.message,
+        });
+      }
+      const snap = await loadSnapshot(workspaceId, workspaceName, revision, scope.projectIds);
       const cacheToken = str(args, "cacheToken");
       if (cacheToken && cacheToken === snap.cacheToken) {
         return toolResult({
           unchanged: true,
+          scoped: scope.projectIds != null || snap.projects.length <= 1,
           cacheToken: snap.cacheToken,
           revision: snap.revision,
         });
       }
+      const many = scope.projectIds == null && snap.projects.length > 1;
       return toolResult({
+        scoped: !many,
+        projectId: scope.projectIds?.[0] ?? (many ? null : snap.project.id),
         cacheToken: snap.cacheToken,
         revision: snap.revision,
-        project: snap.project,
+        project: many ? null : snap.project,
         projects: snap.projects,
         tasks: snap.tasks,
         agents: snap.agents,
         worktrees: snap.worktrees,
         readyIds: snap.readyIds,
         members: snap.members,
+        hint: many
+          ? "Pass projectId. project is null because this token can see more than one."
+          : undefined,
       });
     }
     case "bothy-board_tasks_next": {
-      const next = await nextReady(workspaceId, filter, {
+      const scope = resolveProjectScope(str(args, "projectId"), filter);
+      if (!scope.ok) {
+        return toolResult(
+          { error: scope.message, code: scope.code, projects: scope.projects },
+          true,
+        );
+      }
+      const next = await nextReady(workspaceId, scope.projectIds, {
         machineName: str(args, "machineName"),
         cacheToken: str(args, "cacheToken"),
       });
       return toolResult({
         task: next.task,
+        projectId: next.task?.projectId ?? scope.projectIds?.[0] ?? null,
         spawnCommand: next.spawnCommand,
         grokSessionId: next.grokSessionId,
         cacheToken: next.cacheToken,
@@ -639,8 +682,46 @@ async function callTool(
           userId,
         }),
       );
-    case "bothy-board_mailbox_poll":
-      return toolResult(await pollMailbox(workspaceId, taskId ?? "", str(args, "since")));
+    case "bothy-board_mailbox_poll": {
+      const ids = new Set<string>();
+      if (taskId) ids.add(taskId);
+      if (Array.isArray(args["taskIds"])) {
+        for (const id of args["taskIds"]) if (typeof id === "string" && id) ids.add(id);
+      }
+      if (!ids.size) return toolResult({ error: "taskId or taskIds required" }, true);
+      const list = [...ids];
+      if (list.length > 16) {
+        return toolResult({ error: "taskIds cap is 16", code: "mailbox_cap" }, true);
+      }
+      for (const id of list) await assertTaskAccess(actor, workspaceId, id);
+      const rawSince = args["sinceByTaskId"];
+      const sinceByTaskId =
+        rawSince && typeof rawSince === "object" && !Array.isArray(rawSince)
+          ? (rawSince as Record<string, string>)
+          : undefined;
+      const includeSelf = args["includeSelf"] === true;
+      const excludeGrokSessionId = includeSelf
+        ? undefined
+        : (str(args, "excludeGrokSessionId") ?? sessionFromEnv);
+      const excludeAuthorAgentId = includeSelf ? undefined : str(args, "excludeAuthorAgentId");
+      if (list.length === 1 && !sinceByTaskId) {
+        return toolResult(
+          await pollMailbox(workspaceId, list[0] ?? "", {
+            since: str(args, "since"),
+            excludeGrokSessionId,
+            excludeAuthorAgentId,
+          }),
+        );
+      }
+      return toolResult(
+        await pollMailboxes(workspaceId, list, {
+          since: str(args, "since"),
+          sinceByTaskId,
+          excludeGrokSessionId,
+          excludeAuthorAgentId,
+        }),
+      );
+    }
     case "bothy-board_mailbox_post":
       return toolResult(
         await postMailbox(workspaceId, taskId ?? "", {
@@ -649,6 +730,7 @@ async function callTool(
             str(args, "authorName") ?? (actor.type === "agent" ? actor.keyName : "member"),
           authorKind: actor.type === "agent" ? "agent" : "user",
           authorUserId: userId,
+          authorAgentId: str(args, "authorAgentId"),
           grokSessionId: sessionFromEnv,
         }),
       );
@@ -885,7 +967,15 @@ export async function handleMcp(request: Request): Promise<Response> {
     const actor = await resolveActor(request);
     if (!actor) return json({ error: "Unauthorized" }, 401, request);
 
-    const rpc = (await request.json().catch(() => ({}))) as Rpc;
+    const body = await request.json().catch(() => ({}));
+    if (Array.isArray(body)) {
+      return json(
+        fail(null, -32600, "JSON-RPC batching is not supported. Send one request."),
+        200,
+        request,
+      );
+    }
+    const rpc = body as Rpc;
     rpcId = rpc.id ?? null;
     rpcMethod = rpc.method ?? "";
     const id = rpcId;
@@ -901,7 +991,7 @@ export async function handleMcp(request: Request): Promise<Response> {
         ok(id, {
           protocolVersion: PROTOCOL,
           capabilities: { tools: { listChanged: false }, resources: { listChanged: false } },
-          serverInfo: { name: "bothy-board", version: "0.5.1" },
+          serverInfo: { name: "bothy-board", version: "0.6.0" },
           instructions: INSTRUCTIONS,
         }),
         200,

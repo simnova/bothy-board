@@ -11,6 +11,7 @@ import {
   MAILBOX_MAX_CHARS,
   parsePriority,
   pathUnderRoots,
+  pickDequeueId,
   writeRootsOverlap,
 } from "./factory.ts";
 
@@ -168,4 +169,35 @@ test("next skips overlapping in-flight write_roots", () => {
   assert.deepEqual(dequeueIds(tasks), ["tsk_free"]);
   assert.equal(writeRootsOverlap(["packages/core"], ["packages/core/src"]), true);
   assert.equal(writeRootsOverlap(["packages/core"], ["apps/web"]), false);
+});
+
+test("pickDequeueId uses each project's cap, not the first project's", () => {
+  const leaf = (id: string, projectId: string, priority: number) => ({
+    id,
+    status: "ready" as const,
+    factory: "Planted" as const,
+    priority,
+    depIds: [] as string[],
+    childCount: 0,
+    projectId,
+    writeRoots: [id],
+  });
+  const busy = (id: string, projectId: string) => ({
+    ...leaf(id, projectId, 0),
+    status: "review" as const,
+    factory: "Dispatched" as const,
+  });
+  const tasks = [
+    busy("a-review", "prj_a"),
+    busy("a-review-2", "prj_a"),
+    leaf("a-ready", "prj_a", 0),
+    leaf("b-ready", "prj_b", 5),
+  ];
+  assert.equal(
+    pickDequeueId(tasks, [
+      { id: "prj_a", maxInFlight: 2 },
+      { id: "prj_b", maxInFlight: 2 },
+    ]),
+    "b-ready",
+  );
 });
