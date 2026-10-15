@@ -8,6 +8,7 @@ export * from "./hash";
 export * from "./http";
 export * from "./ids";
 export * from "./mailbox";
+export * from "./mcp-events";
 export * from "./pats";
 export * from "./project-fields";
 export * from "./projects";

@@ -5,7 +5,8 @@ description: >
   Use when claiming or planting cards, minting GROK_SESSION_ID, registering
   worktrees, polling the mailbox, landing proofs, or continuing a parked
   session. Triggers: BothyBoard, bothy-board_tasks_next, Planted, CAS claim,
-  cacheToken, resume_from, worktree registry, proofs.set, treatments.fail.
+  cacheToken, resume_from, worktree registry, proofs.set, treatments.fail,
+  events/poll, task.ready.
 ---
 
 # BothyBoard
@@ -92,7 +93,25 @@ Check `task.projectId` before you claim, comment, or land. Do not touch another 
 
 A monitor observes. It does not call `tasks.next`.
 
-- `sync` with `cacheToken` and `projectId`. Mailbox with `since`. Idle must not start a model turn.
+Prefer MCP Events over a blind `sync` loop. Delivery is `poll` only — no webhook, no `events/stream`.
+`cursor: null` means now, not the beginning of time. Persist `cursor`. Respect `nextPollMs`
+(1s when `hasMore`, otherwise 15s). Idle must not start a model turn.
+
+```json
+{ "method": "events/subscribe", "params": { "name": "task.ready", "arguments": { "projectId": "prj_…" }, "delivery": { "mode": "poll" } } }
+{ "method": "events/poll", "params": { "subscriptionId": "sub_…", "cursor": "<saved>" } }
+```
+
+| Event | Filter | Then |
+|---|---|---|
+| `task.ready` | `projectId`, optional `lane` | `tasks.next` — the payload is not a claim |
+| `task.review` | `projectId` | `tasks.proofs.set` — review still holds `write_roots` |
+| `task.landed` | `projectId` | observe |
+| `mailbox.message` | `taskId` or `taskIds` (max 16) or `projectId` | read `body`. Echo is dropped by session/agent id, not `authorName` |
+
+`events/list` describes them. A multi-project PAT must pass `projectId` (a `taskId` is enough for mailbox).
+The caller's `X-Grok-Session-Id` is excluded unless `includeSelf`. 401/403 is permanent. 5xx stays up.
+
 - Grok: arm `monitor` on a process that prints only `DONE`, `FAILED`, or `CANCELLED`. Not a Stop-hook and not `/loop` — those burn a turn while the board is quiet.
 - Codex: one fresh `codex exec` behind a single-flight lock. Never `codex exec resume` on the Desktop thread.
 - 401/403 or a missing PAT is permanent (`FAILED`, stop). Timeout, 5xx, and connection resets back off and stay up. Do not exit after N transient faults.
@@ -117,7 +136,8 @@ A rejected create means a value is wrong, not which object the key belongs on.
 
 ## Never
 
-- `tasks.next` on Idle / title-only cards, or from a timer
+- `tasks.next` on Idle / title-only cards, or from a timer, or because an event arrived
+- Spawn or claim from an event payload — `claim` is always false
 - Infer absence from an unscoped `sync`
 - Filter mailbox echo by `authorName`
 - Worker `factory=Landed` or `status=done`

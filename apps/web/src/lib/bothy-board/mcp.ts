@@ -39,6 +39,7 @@ import {
 import { listMembers } from "@bothy-board/core/team";
 import type { AgentKind, TaskKind, TaskStatus } from "@bothy-board/core/types";
 import { type Actor, actorUserId, hasScope, projectFilter, resolveActor } from "./actor";
+import { handleMcpEvents } from "./mcp-events-rpc";
 
 type Rpc = {
   jsonrpc?: string;
@@ -48,6 +49,7 @@ type Rpc = {
 };
 
 const PROTOCOL = "2025-03-26";
+const SERVER_VERSION = "0.7.0";
 
 const INSTRUCTIONS = `BothyBoard is the shared shelter — a logbook for humans and coding agents.
 
@@ -57,6 +59,8 @@ Discovery: GET /api/mcp (no auth), /llms.txt, /mcp.json. Resource bothy://skill 
 Orchestrator: tasks.next { projectId, machineName, cacheToken } returns spawnCommand — run that, do not invent grok -p. {task:null} and unchanged:true are success. A token that sees several projects must pass projectId. Land only via tasks.proofs.set (attestation). Workers set review, never done. review holds write_roots until land; the heartbeat TTL does not clear it.
 
 Worker: bind GROK_SESSION_ID, tasks.get, mailbox.poll { taskId or taskIds, since, excludeGrokSessionId } (the only mid-run steer — comments are an audit log). Do not filter on authorName. heartbeat. Dead end: treatments.fail. Cannot continue: tasks.release. JSON-RPC batching is not supported.
+
+Events: events/list, events/subscribe { delivery.mode: poll }, events/poll. task.ready / task.review / task.landed / mailbox.message are wakes. They are not claims — still call tasks.next or tasks.proofs.set. Webhook and events/stream are not supported. cursor null means now.
 
 Owner plants with tasks.plant after TREE done_when. Create refuses title-only. tasks.import is Idle-only, no auto-plant.`;
 
@@ -953,6 +957,8 @@ export async function handleMcp(request: Request): Promise<Response> {
           protocolVersion: PROTOCOL,
           transport: "streamable-http",
           tools: TOOLS.map((t) => t.name),
+          events: ["task.ready", "task.review", "task.landed", "mailbox.message"],
+          eventsDelivery: ["poll"],
           skill: SKILL_PATH,
           llms: "/llms.txt",
           mcpJson: "/mcp.json",
@@ -990,8 +996,12 @@ export async function handleMcp(request: Request): Promise<Response> {
       return json(
         ok(id, {
           protocolVersion: PROTOCOL,
-          capabilities: { tools: { listChanged: false }, resources: { listChanged: false } },
-          serverInfo: { name: "bothy-board", version: "0.6.0" },
+          capabilities: {
+            tools: { listChanged: false },
+            resources: { listChanged: false },
+            events: { listChanged: false },
+          },
+          serverInfo: { name: "bothy-board", version: SERVER_VERSION },
           instructions: INSTRUCTIONS,
         }),
         200,
@@ -1052,6 +1062,11 @@ export async function handleMcp(request: Request): Promise<Response> {
         const code = isBoardError(err) ? err.code : undefined;
         return json(ok(id, toolResult({ error: message, code }, true)), 200, request);
       }
+    }
+    if (method.startsWith("events/")) {
+      const out = await handleMcpEvents(actor, method, params, grokSessionHeader);
+      if (!out.ok) return json(fail(id, out.code, out.message), 200, request);
+      return json(ok(id, out.result), 200, request);
     }
     return json(fail(id, -32601, `unknown method ${method}`), 200, request);
   } catch (err) {
