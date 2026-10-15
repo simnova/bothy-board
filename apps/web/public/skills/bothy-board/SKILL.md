@@ -94,12 +94,15 @@ Check `task.projectId` before you claim, comment, or land. Do not touch another 
 A monitor observes. It does not call `tasks.next`.
 
 Prefer MCP Events over a blind `sync` loop. Delivery is `poll` only — no webhook, no `events/stream`.
-`cursor: null` means now, not the beginning of time. Persist `cursor`. Respect `nextPollMs`
-(1s when `hasMore`, otherwise 15s). Idle must not start a model turn.
+`cursor: null` means now, not the beginning of time. Persist `cursor`. Idle must not start a model turn.
+
+Short poll (`waitMs` omitted or 0): respect `nextPollMs` (1s when `hasMore`, otherwise 15s).
+
+Long poll: pass `waitMs` up to 20000. The server checks about once a second and returns this same payload before the platform cuts the request. An empty hold returns `nextPollMs: 0` — open the next poll immediately. Do not also sleep 15s. While `hasMore` is true, poll again with no `waitMs` until the page is drained. A 504, timeout, or connection reset is a 5xx: back off and stay up.
 
 ```json
 { "method": "events/subscribe", "params": { "name": "task.ready", "arguments": { "projectId": "prj_…" }, "delivery": { "mode": "poll" } } }
-{ "method": "events/poll", "params": { "subscriptionId": "sub_…", "cursor": "<saved>" } }
+{ "method": "events/poll", "params": { "subscriptionId": "sub_…", "cursor": "<saved>", "waitMs": 20000 } }
 ```
 
 | Event | Filter | Then |

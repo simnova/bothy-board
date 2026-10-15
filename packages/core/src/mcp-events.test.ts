@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  clampWaitMs,
   decodeCursor,
   encodeCursor,
   type FeedRow,
+  holdPoll,
+  MCP_EVENTS_FUNCTION_MAX_MS,
+  MCP_EVENTS_HOLD_TAIL_MS,
+  MCP_EVENTS_MAX_WAIT_MS,
   occurrenceFromRow,
   pageFeed,
   pollDeliveryMode,
@@ -132,4 +137,171 @@ test("a full page asks the client to poll again", () => {
   const page = pageFeed(rows, "task.ready", {}, 50, true);
   assert.equal(page.events.length, 1);
   assert.equal(page.hasMore, true);
+});
+
+function quiet(events: readonly unknown[] = [], extra?: { hasMore?: boolean; cursor?: string }) {
+  return {
+    events,
+    cursor: extra?.cursor ?? "c",
+    hasMore: extra?.hasMore ?? false,
+    nextPollMs: 15_000,
+  };
+}
+
+test("waitMs clamps to the hold that fits the function budget", () => {
+  assert.equal(clampWaitMs(undefined), 0);
+  assert.equal(clampWaitMs(0), 0);
+  assert.equal(clampWaitMs(-5), 0);
+  assert.equal(clampWaitMs("20000"), 20_000);
+  assert.equal(clampWaitMs(999_999), MCP_EVENTS_MAX_WAIT_MS);
+  assert.ok(MCP_EVENTS_MAX_WAIT_MS + MCP_EVENTS_HOLD_TAIL_MS <= MCP_EVENTS_FUNCTION_MAX_MS);
+});
+
+test("a hit on the first check does not sleep", async () => {
+  let sleeps = 0;
+  const page = await holdPoll(async () => quiet([{ id: "1" }]), {
+    cursor: null,
+    waitMs: 20_000,
+    now: () => 1_000,
+    sleep: async () => {
+      sleeps += 1;
+    },
+  });
+  assert.equal(sleeps, 0);
+  assert.equal(page.events.length, 1);
+  assert.equal(page.nextPollMs, 0);
+});
+
+test("hold sleeps until an event and then the client should poll again immediately", async () => {
+  let t = 0;
+  let calls = 0;
+  const seen: Array<string | null> = [];
+  const page = await holdPoll(
+    async (cursor) => {
+      seen.push(cursor);
+      calls += 1;
+      if (calls < 3) return quiet([], { cursor: `echo-${calls}` });
+      return quiet([{ id: "e" }], { cursor: "hit" });
+    },
+    {
+      cursor: "start",
+      waitMs: 20_000,
+      now: () => t,
+      sleep: async (ms) => {
+        t += ms;
+      },
+    },
+  );
+  assert.deepEqual(seen, ["start", "echo-1", "echo-2"]);
+  assert.equal(page.events.length, 1);
+  assert.equal(page.cursor, "hit");
+  assert.equal(page.nextPollMs, 0);
+  assert.equal(t, 2_000);
+});
+
+test("an empty hold ends at the deadline with nextPollMs 0", async () => {
+  let t = 0;
+  let calls = 0;
+  const page = await holdPoll(
+    async () => {
+      calls += 1;
+      return quiet();
+    },
+    {
+      cursor: "c0",
+      waitMs: 2_500,
+      now: () => t,
+      sleep: async (ms) => {
+        t += ms;
+      },
+    },
+  );
+  assert.equal(page.events.length, 0);
+  assert.equal(page.nextPollMs, 0);
+  assert.equal(t, 2_500);
+  assert.equal(calls, 4);
+});
+
+test("waitMs 0 stays a short poll", async () => {
+  let sleeps = 0;
+  const page = await holdPoll(async () => quiet(), {
+    cursor: null,
+    waitMs: 0,
+    sleep: async () => {
+      sleeps += 1;
+    },
+  });
+  assert.equal(sleeps, 0);
+  assert.equal(page.nextPollMs, 15_000);
+});
+
+test("hasMore stays a 1s drain, including after a hold", async () => {
+  const page = await holdPoll(async () => quiet([{ id: "1" }], { hasMore: true }), {
+    cursor: null,
+    waitMs: 20_000,
+    now: () => 0,
+    sleep: async () => {
+      throw new Error("should not sleep");
+    },
+  });
+  assert.equal(page.nextPollMs, 1_000);
+});
+
+test("a full page of echoes is drained without sleeping, then capped", async () => {
+  let calls = 0;
+  const page = await holdPoll(
+    async () => {
+      calls += 1;
+      return quiet([], { hasMore: true, cursor: `p${calls}` });
+    },
+    {
+      cursor: null,
+      waitMs: 20_000,
+      now: () => 0,
+      sleep: async () => {
+        throw new Error("should not sleep");
+      },
+    },
+  );
+  assert.equal(calls, 9);
+  assert.equal(page.hasMore, true);
+  assert.equal(page.nextPollMs, 1_000);
+  assert.equal(page.cursor, "p9");
+});
+
+test("abort during the sleep returns without another query", async () => {
+  const ac = new AbortController();
+  let calls = 0;
+  const page = await holdPoll(
+    async () => {
+      calls += 1;
+      return quiet();
+    },
+    {
+      cursor: null,
+      waitMs: 20_000,
+      now: () => 0,
+      signal: ac.signal,
+      sleep: async () => {
+        ac.abort();
+      },
+    },
+  );
+  assert.equal(calls, 1);
+  assert.equal(page.nextPollMs, 0);
+});
+
+test("a hold does not start when the function budget is already spent", async () => {
+  let sleeps = 0;
+  const page = await holdPoll(async () => quiet(), {
+    cursor: null,
+    waitMs: 20_000,
+    now: () => 23_000,
+    invocationStartedAt: 0,
+    sleep: async () => {
+      sleeps += 1;
+    },
+  });
+  assert.equal(sleeps, 0);
+  assert.equal(page.nextPollMs, 15_000);
 });

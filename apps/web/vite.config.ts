@@ -219,7 +219,13 @@ export default defineConfig(({ command, isPreview }) => ({
                 maxDuration: 10,
                 memory: 1024,
               },
+              // /api/mcp alone may run 25s so events/poll can hold ~20s and still
+              // return 200. Must match MCP_EVENTS_FUNCTION_MAX_MS. Every other
+              // API route stays at 10s — a hung claim must not inherit the hold.
               functionRules: {
+                "/api/mcp": {
+                  maxDuration: 25,
+                },
                 "/api/**": {
                   maxDuration: 10,
                 },

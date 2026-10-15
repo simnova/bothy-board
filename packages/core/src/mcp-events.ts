@@ -18,6 +18,17 @@ export const MCP_EVENTS_MAX_REPLAY_MS = 7 * 24 * 60 * 60 * 1000;
 export const MCP_EVENTS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const MCP_EVENTS_QUIET_POLL_MS = 15_000;
 export const MCP_EVENTS_BUSY_POLL_MS = 1_000;
+/** Longest events/poll will hold the HTTP request. Fits under the /api/mcp function budget. */
+export const MCP_EVENTS_MAX_WAIT_MS = 20_000;
+/** Pause between checks. The database connection is not held across this sleep. */
+export const MCP_EVENTS_POLL_SLICE_MS = 1_000;
+/** Vercel maxDuration for /api/mcp only. Other /api routes stay at 10s. Keep vite.config.ts in step. */
+export const MCP_EVENTS_FUNCTION_MAX_MS = 25_000;
+/** Leave this much of the function budget for the last query and the response. */
+export const MCP_EVENTS_HOLD_TAIL_MS = 3_000;
+
+const HOLD_MIN_REMAINING_MS = 200;
+const HOLD_DRAIN_CAP = 8;
 
 const WAKE_NEXT = "Wake only. Call tasks.next. This event is not a claim.";
 const WAKE_LAND = "Wake only. review holds write_roots until tasks.proofs.set.";
@@ -394,8 +405,104 @@ export function clampReplayMs(value: unknown): number {
   return Math.min(MCP_EVENTS_MAX_REPLAY_MS, Math.floor(n));
 }
 
-export function nextPollMs(hasMore: boolean): number {
-  return hasMore ? MCP_EVENTS_BUSY_POLL_MS : MCP_EVENTS_QUIET_POLL_MS;
+export function nextPollMs(hasMore: boolean, held = false): number {
+  if (hasMore) return MCP_EVENTS_BUSY_POLL_MS;
+  if (held) return 0;
+  return MCP_EVENTS_QUIET_POLL_MS;
+}
+
+/** `waitMs` omitted or ≤0 is a short poll. Larger values clamp to the hold cap. */
+export function clampWaitMs(value: unknown): number {
+  if (value === undefined || value === null || value === "") return 0;
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(MCP_EVENTS_MAX_WAIT_MS, Math.floor(n));
+}
+
+export type HoldPage = {
+  events: readonly unknown[];
+  cursor: string;
+  hasMore: boolean;
+  nextPollMs: number;
+};
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function sleepOrAbort(
+  ms: number,
+  signal: AbortSignal | undefined,
+  sleep: (ms: number) => Promise<void>,
+): Promise<void> {
+  if (!signal) {
+    await sleep(ms);
+    return;
+  }
+  if (signal.aborted) return;
+  await Promise.race([
+    sleep(ms),
+    new Promise<void>((resolve) => {
+      signal.addEventListener("abort", () => resolve(), { once: true });
+    }),
+  ]);
+}
+
+/**
+ * Short poll when `waitMs` is 0. Otherwise check, sleep ~1s, check again until an
+ * event, a drain cap, abort, or the deadline. Each `poll` call must finish its
+ * own query — this function does not hold a connection across `sleep`.
+ * An empty hold sets `nextPollMs` to 0 so the client opens the next request
+ * instead of also sleeping the quiet interval.
+ */
+export async function holdPoll<T extends HoldPage>(
+  poll: (cursor: string | null) => Promise<T>,
+  input: {
+    cursor: string | null;
+    waitMs: number;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+    signal?: AbortSignal;
+    invocationStartedAt?: number;
+  },
+): Promise<T> {
+  const now = input.now ?? Date.now;
+  const sleep = input.sleep ?? defaultSleep;
+  const waitMs = clampWaitMs(input.waitMs);
+  const started = now();
+  const invocation = input.invocationStartedAt ?? started;
+  const deadline = Math.min(
+    started + waitMs,
+    invocation + MCP_EVENTS_FUNCTION_MAX_MS - MCP_EVENTS_HOLD_TAIL_MS,
+  );
+  let cursor = input.cursor;
+  let page = await poll(cursor);
+  const canHold = waitMs > 0 && deadline - started >= HOLD_MIN_REMAINING_MS;
+  if (!canHold || input.signal?.aborted) {
+    return { ...page, nextPollMs: nextPollMs(page.hasMore, false) };
+  }
+  if (page.events.length > 0) {
+    return { ...page, nextPollMs: nextPollMs(page.hasMore, true) };
+  }
+  let drains = 0;
+  while (!input.signal?.aborted) {
+    if (page.events.length > 0) break;
+    if (page.hasMore) {
+      if (drains >= HOLD_DRAIN_CAP) break;
+      drains += 1;
+      cursor = page.cursor;
+      page = await poll(cursor);
+      continue;
+    }
+    const remaining = deadline - now();
+    if (remaining < HOLD_MIN_REMAINING_MS) break;
+    await sleepOrAbort(Math.min(MCP_EVENTS_POLL_SLICE_MS, remaining), input.signal, sleep);
+    if (input.signal?.aborted) break;
+    cursor = page.cursor;
+    page = await poll(cursor);
+    drains = 0;
+  }
+  return { ...page, nextPollMs: nextPollMs(page.hasMore, true) };
 }
 
 export function pollDeliveryMode(delivery: unknown): { ok: true } | { ok: false; message: string } {

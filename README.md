@@ -57,7 +57,7 @@ packages/ui       # Shared UI primitives
 packages/typescript-config
 ```
 
-MCP tools are `bothy-board_*` (Grok-safe: `^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$`). Dotted names (`bothy-board.tasks.next`) still work as aliases. Keys are `bb_live_` / `bb_pat_`. Pass `projectId` when a PAT can see more than one project. Mailbox echo is excluded by `grokSessionId` / `authorAgentId`, not by `authorName`. `events/poll` (poll only) wakes on `task.ready`, `task.review`, `task.landed`, and `mailbox.message` — still claim with `tasks.next`.
+MCP tools are `bothy-board_*` (Grok-safe: `^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$`). Dotted names (`bothy-board.tasks.next`) still work as aliases. Keys are `bb_live_` / `bb_pat_`. Pass `projectId` when a PAT can see more than one project. Mailbox echo is excluded by `grokSessionId` / `authorAgentId`, not by `authorName`. `events/poll` (poll only) wakes on `task.ready`, `task.review`, `task.landed`, and `mailbox.message` — still claim with `tasks.next`. `waitMs` (max 20s) holds that request; an empty hold returns `nextPollMs: 0`.
 
 ## License
 

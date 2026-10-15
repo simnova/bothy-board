@@ -3,6 +3,7 @@ import { resolveProjectScope } from "@bothy-board/core/actor";
 import { isBoardError } from "@bothy-board/core/errors";
 import type { WriterKind } from "@bothy-board/core/factory";
 import { corsHeaders, json } from "@bothy-board/core/http";
+import { MCP_EVENTS_MAX_WAIT_MS } from "@bothy-board/core/mcp-events";
 import {
   addComment,
   claimTask,
@@ -49,7 +50,7 @@ type Rpc = {
 };
 
 const PROTOCOL = "2025-03-26";
-const SERVER_VERSION = "0.7.0";
+const SERVER_VERSION = "0.7.1";
 
 const INSTRUCTIONS = `BothyBoard is the shared shelter — a logbook for humans and coding agents.
 
@@ -60,7 +61,7 @@ Orchestrator: tasks.next { projectId, machineName, cacheToken } returns spawnCom
 
 Worker: bind GROK_SESSION_ID, tasks.get, mailbox.poll { taskId or taskIds, since, excludeGrokSessionId } (the only mid-run steer — comments are an audit log). Do not filter on authorName. heartbeat. Dead end: treatments.fail. Cannot continue: tasks.release. JSON-RPC batching is not supported.
 
-Events: events/list, events/subscribe { delivery.mode: poll }, events/poll. task.ready / task.review / task.landed / mailbox.message are wakes. They are not claims — still call tasks.next or tasks.proofs.set. Webhook and events/stream are not supported. cursor null means now.
+Events: events/list, events/subscribe { delivery.mode: poll }, events/poll. task.ready / task.review / task.landed / mailbox.message are wakes. They are not claims — still call tasks.next or tasks.proofs.set. Webhook and events/stream are not supported. cursor null means now. events/poll waitMs (max 20000) holds the request; an empty hold returns nextPollMs 0 — open the next poll, do not also sleep 15s. 504 and connection resets are transient.
 
 Owner plants with tasks.plant after TREE done_when. Create refuses title-only. tasks.import is Idle-only, no auto-plant.`;
 
@@ -943,6 +944,7 @@ async function callTool(
 }
 
 export async function handleMcp(request: Request): Promise<Response> {
+  const invocationStartedAt = Date.now();
   if (request.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders(request) });
   }
@@ -959,6 +961,7 @@ export async function handleMcp(request: Request): Promise<Response> {
           tools: TOOLS.map((t) => t.name),
           events: ["task.ready", "task.review", "task.landed", "mailbox.message"],
           eventsDelivery: ["poll"],
+          eventsLongPollMs: MCP_EVENTS_MAX_WAIT_MS,
           skill: SKILL_PATH,
           llms: "/llms.txt",
           mcpJson: "/mcp.json",
@@ -1064,7 +1067,10 @@ export async function handleMcp(request: Request): Promise<Response> {
       }
     }
     if (method.startsWith("events/")) {
-      const out = await handleMcpEvents(actor, method, params, grokSessionHeader);
+      const out = await handleMcpEvents(actor, method, params, grokSessionHeader, {
+        signal: request.signal,
+        invocationStartedAt,
+      });
       if (!out.ok) return json(fail(id, out.code, out.message), 200, request);
       return json(ok(id, out.result), 200, request);
     }

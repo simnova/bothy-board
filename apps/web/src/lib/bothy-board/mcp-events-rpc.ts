@@ -2,7 +2,9 @@ import { assertTaskAccess } from "@bothy-board/core/access";
 import { type Actor, projectFilter } from "@bothy-board/core/actor";
 import { isBoardError } from "@bothy-board/core/errors";
 import {
+  clampWaitMs,
   type EventFilter,
+  holdPoll,
   isMcpEventName,
   MCP_EVENT_DEFS,
   type McpEventName,
@@ -73,6 +75,7 @@ export async function handleMcpEvents(
   method: string,
   params: Params,
   grokSessionHeader?: string,
+  opts?: { signal?: AbortSignal; invocationStartedAt?: number },
 ): Promise<EventsResult> {
   try {
     if (!hasScope(actor, "board:read")) {
@@ -121,7 +124,7 @@ export async function handleMcpEvents(
           cursor: sub.cursor,
           refreshBefore: sub.refreshBefore,
           truncated: false,
-          note: "Poll with this id. A wake is not a claim — call tasks.next or tasks.proofs.set.",
+          note: "Poll with this id. Pass waitMs (max 20000) to hold the request. A wake is not a claim — call tasks.next or tasks.proofs.set.",
         },
       };
     }
@@ -155,14 +158,26 @@ export async function handleMcpEvents(
             ? params["cursor"]
             : storedCursor;
       const pat = projectFilter(actor);
-      const page = await pollEventFeed(actor.workspaceId, {
-        name,
-        filter,
-        allowedProjectIds: filter.projectId ? null : pat,
-        cursor,
-        maxEvents: params["maxEvents"],
-        maxAgeMs: params["maxAgeMs"],
-      });
+      const waitMs = clampWaitMs(params["waitMs"]);
+      const page = await holdPoll(
+        (cursor) =>
+          pollEventFeed(actor.workspaceId, {
+            name,
+            filter,
+            allowedProjectIds: filter.projectId ? null : pat,
+            cursor,
+            maxEvents: params["maxEvents"],
+            maxAgeMs: params["maxAgeMs"],
+          }),
+        {
+          cursor,
+          waitMs,
+          ...(opts?.signal ? { signal: opts.signal } : {}),
+          ...(opts?.invocationStartedAt !== undefined
+            ? { invocationStartedAt: opts.invocationStartedAt }
+            : {}),
+        },
+      );
       if (subscriptionId)
         await touchSubscription(actor.workspaceId, actor, subscriptionId, page.cursor);
       return { ok: true, result: page };
